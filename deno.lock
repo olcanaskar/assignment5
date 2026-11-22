@@ -9,6 +9,7 @@
     "npm:drizzle-kit@0.31": "0.31.11",
     "npm:drizzle-orm@0.44": "0.44.7_@libsql+client@0.15.15",
     "npm:hono@4": "4.13.18",
+    "npm:jose@6": "6.2.18",
     "npm:zod@4": "4.6.7"
   },
   "jsr": {
@@ -661,6 +662,9 @@
     "hono@4.13.18": {
       "integrity": "sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA=="
     },
+    "jose@6.2.18": {
+      "integrity": "sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg=="
+    },
     "js-base64@3.9.6": {
       "integrity": "sha512-LjkzbLtU6Lx6fjXMYGEACEB7rdtqZtxkBe9aS1ZpDNUyWgUivw3yBEIhQ37OVygJYRt+C+9e9fVT8PpFzH2Hww=="
     },
@@ -743,6 +747,7 @@
       "npm:drizzle-kit@0.31",
       "npm:drizzle-orm@0.44",
       "npm:hono@4",
+      "npm:jose@6",
       "npm:zod@4"
     ]
   }

@@ -1,36 +1,24 @@
 // Abdullah Olcan Askar, 2024502180
 import { assertEquals } from "@std/assert";
 import { Hono } from "hono";
-import { createSession, type Env, requireAuth } from "../src/auth.ts";
-import { createDb, migrate } from "../src/db.ts";
-import { users } from "../src/schema.ts";
+import { type Env, requireAuth, signToken } from "../src/auth.ts";
 import { freshApp, login, register } from "./helpers.ts";
 
-Deno.test("R3: requireAuth rejects a missing token and accepts a valid one", async () => {
-  const file = await Deno.makeTempFile({ suffix: ".db" });
-  const db = createDb(`file:${file}`);
-  await migrate(db);
-
-  const [user] = await db.db.insert(users).values({
-    email: "middleware@example.com",
-    passwordHash: "not-a-real-hash",
-  }).returning();
-  if (!user) throw new Error("user insert failed");
-
+Deno.test("R3/Bonus 7: requireAuth rejects a missing token and accepts a valid one", async () => {
   const app = new Hono<Env>();
-  app.use("/api/*", requireAuth(db));
-  app.get("/api/me", (c) => c.json({ userId: c.get("userId") }));
+  app.use("/api/*", requireAuth);
+  app.get("/api/me", (c) => c.json({ userId: c.get("userId"), role: c.get("role") }));
 
   const denied = await app.request("/api/me");
   assertEquals(denied.status, 401);
   assertEquals(await denied.json(), { error: "unauthorized" });
 
-  const token = await createSession(db, user.id);
+  const token = await signToken(42, "admin");
   const allowed = await app.request("/api/me", {
     headers: { authorization: `Bearer ${token}` },
   });
   assertEquals(allowed.status, 200);
-  assertEquals(await allowed.json(), { userId: user.id });
+  assertEquals(await allowed.json(), { userId: 42, role: "admin" });
 });
 
 Deno.test("R3: register creates a user without returning the password hash", async () => {

@@ -5,10 +5,11 @@ import { z } from "zod";
 import type { Db } from "./db.ts";
 import {
   checkPassword,
-  createSession,
   type Env,
   hashPassword,
   requireAuth,
+  requireRole,
+  signToken,
 } from "./auth.ts";
 import { createLoginLimiter } from "./rateLimit.ts";
 import { tasks, users } from "./schema.ts";
@@ -31,6 +32,10 @@ const TaskQuery = z.object({
   status: z.enum(["todo", "in-progress", "done"]).optional(),
 });
 
+type Task = typeof tasks.$inferSelect;
+
+const taskKey = (userId: number, id: number) => ["task", userId, id];
+
 /** A visible task belongs to the user and has not been soft-deleted. */
 const ownVisible = (id: number, userId: number) =>
   and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt));
@@ -39,10 +44,21 @@ const ownVisible = (id: number, userId: number) =>
 const ownDeleted = (id: number, userId: number) =>
   and(eq(tasks.id, id), eq(tasks.userId, userId), isNotNull(tasks.deletedAt));
 
-/** Build the whole application around a database, so tests can give it their own. */
-export function createApp(db: Db) {
+/**
+ * Build the whole application around a database, so tests can give it their own.
+ * Passing a Deno.Kv instance enables the 60-second task cache (Bonus 16).
+ */
+export function createApp(db: Db, kv?: Deno.Kv) {
   const app = new Hono<Env>();
   const loginLimiter = createLoginLimiter();
+
+  const loadTask = async (id: number, userId: number) => {
+    const [task] = await db.db
+      .select()
+      .from(tasks)
+      .where(ownVisible(id, userId));
+    return task;
+  };
 
   // One JSON log line per request, with an id that clients can quote in a bug report.
   app.use("*", async (c, next) => {
@@ -133,11 +149,11 @@ export function createApp(db: Db) {
     }
 
     loginLimiter.clear(limitKey);
-    return c.json({ token: await createSession(db, user.id) });
+    return c.json({ token: await signToken(user.id, user.role) });
   });
 
-  // Everything below /api needs a valid session token.
-  app.use("/api/*", requireAuth(db));
+  // Everything below /api needs a valid JWT.
+  app.use("/api/*", requireAuth);
 
   app.get("/api/tasks", async (c) => {
     const parsed = TaskQuery.safeParse(c.req.query());
@@ -170,6 +186,18 @@ export function createApp(db: Db) {
     return c.json(await summaryGrouped(db, c.get("userId")));
   });
 
+  app.get("/api/admin/users", requireRole("admin"), async (c) => {
+    const items = await db.db
+      .select({
+        id: users.id,
+        email: users.email,
+        role: users.role,
+        createdAt: users.createdAt,
+      })
+      .from(users);
+    return c.json({ items });
+  });
+
   app.post("/api/tasks", async (c) => {
     const parsed = TaskBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -191,10 +219,19 @@ export function createApp(db: Db) {
       return c.json({ error: "not found" }, 404);
     }
 
-    const [task] = await db.db
-      .select()
-      .from(tasks)
-      .where(ownVisible(id, c.get("userId")));
+    const userId = c.get("userId");
+    if (kv) {
+      const key = taskKey(userId, id);
+      const hit = await kv.get<Task>(key);
+      if (hit.value !== null) return c.json(hit.value);
+
+      const task = await loadTask(id, userId);
+      if (!task) return c.json({ error: "not found" }, 404);
+      await kv.set(key, task, { expireIn: 60_000 });
+      return c.json(task);
+    }
+
+    const task = await loadTask(id, userId);
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
@@ -209,11 +246,13 @@ export function createApp(db: Db) {
       return c.json({ error: "validation failed", issues: parsed.error.issues }, 400);
     }
 
+    const userId = c.get("userId");
     const [task] = await db.db
       .update(tasks)
       .set(parsed.data)
-      .where(ownVisible(id, c.get("userId")))
+      .where(ownVisible(id, userId))
       .returning();
+    if (kv) await kv.delete(taskKey(userId, id));
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
@@ -223,11 +262,13 @@ export function createApp(db: Db) {
       return c.json({ error: "not found" }, 404);
     }
 
+    const userId = c.get("userId");
     const [deleted] = await db.db
       .update(tasks)
       .set({ deletedAt: sql`(strftime('%s','now'))` })
-      .where(ownVisible(id, c.get("userId")))
+      .where(ownVisible(id, userId))
       .returning({ id: tasks.id });
+    if (kv) await kv.delete(taskKey(userId, id));
     return deleted ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
   });
 
@@ -237,11 +278,13 @@ export function createApp(db: Db) {
       return c.json({ error: "not found" }, 404);
     }
 
+    const userId = c.get("userId");
     const [task] = await db.db
       .update(tasks)
       .set({ deletedAt: null })
-      .where(ownDeleted(id, c.get("userId")))
+      .where(ownDeleted(id, userId))
       .returning();
+    if (kv) await kv.delete(taskKey(userId, id));
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 

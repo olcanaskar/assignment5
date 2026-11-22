@@ -5,8 +5,8 @@ import type { Db } from "./db.ts";
 import { tasks, users } from "./schema.ts";
 
 const DEMO_USERS = [
-  { email: "demo1@example.com", password: "secret123" },
-  { email: "demo2@example.com", password: "secret123" },
+  { email: "demo1@example.com", password: "secret123", role: "user" },
+  { email: "demo2@example.com", password: "secret123", role: "admin" },
 ] as const;
 
 const TITLES = [
@@ -44,7 +44,7 @@ export async function seedDemoData(db: Db): Promise<SeedResult> {
     const passwordHash = await hashPassword(demo.password);
     const [created] = await db.db
       .insert(users)
-      .values({ email: demo.email, passwordHash })
+      .values({ email: demo.email, passwordHash, role: demo.role })
       .onConflictDoNothing()
       .returning({ id: users.id });
     if (created) createdUsers++;
@@ -60,6 +60,9 @@ export async function seedDemoData(db: Db): Promise<SeedResult> {
     if (userId === undefined) {
       throw new Error(`could not find or create ${demo.email}`);
     }
+
+    // Keep the demo roles correct even if an older seed created the users.
+    await db.db.update(users).set({ role: demo.role }).where(eq(users.id, userId));
 
     const [existingTask] = await db.db
       .select({ id: tasks.id })

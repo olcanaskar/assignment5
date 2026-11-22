@@ -1,6 +1,6 @@
 // Abdullah Olcan Askar, 2024502180
 import { assertEquals } from "@std/assert";
-import { count } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { createDb, migrate } from "../src/db.ts";
 import { seedDemoData } from "../src/seed.ts";
 import { tasks, users } from "../src/schema.ts";
@@ -27,4 +27,10 @@ Deno.test("Bonus 5: seed creates demo data and is safe to run twice", async () =
 
   const [taskCountAgain] = await db.db.select({ n: count() }).from(tasks);
   assertEquals(taskCountAgain?.n, 20);
+
+  const [demo2] = await db.db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.email, "demo2@example.com"));
+  assertEquals(demo2?.role, "admin");
 });
