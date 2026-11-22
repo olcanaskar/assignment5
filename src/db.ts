@@ -6,9 +6,15 @@ import * as schema from "./schema.ts";
 
 export type Db = ReturnType<typeof createDb>;
 
-/** Open a database. Tests pass a temporary file. */
-export function createDb(url: string, options: { logger?: boolean } = {}) {
-  const client = createClient({ url });
+/** Open a database. Tests pass a temporary file; hosted libSQL also needs a token. */
+export function createDb(
+  url: string,
+  options: { logger?: boolean; authToken?: string } = {},
+) {
+  const client = createClient({
+    url,
+    ...(options.authToken ? { authToken: options.authToken } : {}),
+  });
   const db = drizzle(client, { schema, logger: options.logger ?? false });
   return { db, client };
 }

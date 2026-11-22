@@ -4,6 +4,7 @@ import { z } from "zod";
 const ConfigSchema = z.object({
   port: z.coerce.number().int().min(1).max(65535).default(8000),
   databaseUrl: z.string().min(1).default("file:./tasks.db"),
+  databaseAuthToken: z.string().min(1).optional(),
   jwtSecret: z.string().min(1).default("dev-secret"),
   appEnv: z.enum(["development", "test", "production"]).default("development"),
   uploadDir: z.string().min(1).default("./uploads"),
@@ -22,6 +23,7 @@ export function loadConfig(
   const parsed = ConfigSchema.safeParse({
     port: env.PORT,
     databaseUrl: env.DATABASE_URL,
+    databaseAuthToken: env.TURSO_AUTH_TOKEN,
     jwtSecret: env.JWT_SECRET,
     appEnv: env.APP_ENV,
     uploadDir: env.UPLOAD_DIR,

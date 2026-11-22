@@ -6,14 +6,18 @@ import { Pool } from "./pool.ts";
  * Open several libSQL clients on the same SQLite file. WAL lets readers run
  * while one writer works, and busy_timeout waits instead of failing on a lock.
  */
-export async function createDbPool(url: string, size: number): Promise<Pool<Db>> {
+export async function createDbPool(
+  url: string,
+  size: number,
+  authToken?: string,
+): Promise<Pool<Db>> {
   if (!Number.isInteger(size) || size < 1) {
     throw new Error("pool size must be a positive integer");
   }
 
   const items: Db[] = [];
   for (let index = 0; index < size; index++) {
-    const db = createDb(url);
+    const db = createDb(url, { authToken });
     await db.client.execute("PRAGMA journal_mode=WAL");
     await db.client.execute("PRAGMA busy_timeout=5000");
     items.push(db);

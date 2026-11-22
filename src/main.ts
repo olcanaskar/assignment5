@@ -14,9 +14,15 @@ try {
   Deno.exit(1);
 }
 
-const db = createDb(config.databaseUrl);
+const db = createDb(config.databaseUrl, {
+  authToken: config.databaseAuthToken,
+});
 await migrate(db);
-const pool = await createDbPool(config.databaseUrl, 3);
+const pool = await createDbPool(
+  config.databaseUrl,
+  3,
+  config.databaseAuthToken,
+);
 
 const kv = config.kvPath ? await Deno.openKv(config.kvPath) : await Deno.openKv();
 
