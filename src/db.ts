@@ -26,7 +26,15 @@ export async function migrate({ client }: Db) {
        user_id INTEGER NOT NULL REFERENCES users(id),
        expires_at INTEGER NOT NULL
      )`,
-    // TODO R2: add the tasks table (id, user_id -> users.id, title, status,
-    // priority, created_at). Status is one of: todo, in-progress, done.
+    `CREATE TABLE IF NOT EXISTS tasks (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       user_id INTEGER NOT NULL REFERENCES users(id),
+       title TEXT NOT NULL,
+       status TEXT NOT NULL DEFAULT 'todo'
+         CHECK (status IN ('todo', 'in-progress', 'done')),
+       priority TEXT NOT NULL DEFAULT 'medium'
+         CHECK (priority IN ('low', 'medium', 'high')),
+       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+     )`,
   ]);
 }

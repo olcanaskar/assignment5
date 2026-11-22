@@ -18,5 +18,18 @@ export const sessions = sqliteTable("sessions", {
   expiresAt: integer("expires_at").notNull(),
 });
 
-// TODO R2: define `tasks` the same way. Status is a text column restricted to
-// "todo" | "in-progress" | "done". A task belongs to one user (userId).
+// A task belongs to exactly one user. The enum option restricts the values in
+// TypeScript; the CHECK constraints in migrate() do the same in SQLite.
+export const tasks = sqliteTable("tasks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  title: text("title").notNull(),
+  status: text("status", { enum: ["todo", "in-progress", "done"] })
+    .notNull()
+    .default("todo"),
+  priority: text("priority", { enum: ["low", "medium", "high"] })
+    .notNull()
+    .default("medium"),
+  // SQL default: every row gets the time of its own insert, not the start-up time.
+  createdAt: integer("created_at").notNull().default(sql`(strftime('%s','now'))`),
+});
