@@ -1,4 +1,4 @@
-// STUDENT NAME, STUDENT NUMBER
+// Abdullah Olcan Askar, 2024502180
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import * as schema from "./schema.ts";

@@ -1,4 +1,4 @@
-// STUDENT NAME, STUDENT NUMBER
+// Abdullah Olcan Askar, 2024502180
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 

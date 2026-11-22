@@ -1,4 +1,4 @@
-// STUDENT NAME, STUDENT NUMBER
+// Abdullah Olcan Askar, 2024502180
 import type { MiddlewareHandler } from "hono";
 import bcrypt from "bcryptjs";
 import type { Db } from "./db.ts";

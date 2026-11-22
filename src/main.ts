@@ -1,4 +1,4 @@
-// STUDENT NAME, STUDENT NUMBER
+// Abdullah Olcan Askar, 2024502180
 import { createApp } from "./app.ts";
 import { createDb, migrate } from "./db.ts";
 
