@@ -21,6 +21,7 @@
     "zod": "npm:zod@^4",
     "bcryptjs": "npm:bcryptjs@^3",
     "jose": "npm:jose@^6",
+    "@hono/zod-openapi": "npm:@hono/zod-openapi@^1",
     "drizzle-orm": "npm:drizzle-orm@^0.44",
     "drizzle-orm/libsql": "npm:drizzle-orm@^0.44/libsql",
     "drizzle-orm/sqlite-core": "npm:drizzle-orm@^0.44/sqlite-core",
