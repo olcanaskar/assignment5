@@ -10,6 +10,7 @@ import {
   requireAuth,
   requireRole,
   signToken,
+  verifyToken,
 } from "./auth.ts";
 import { createLoginLimiter } from "./rateLimit.ts";
 import type { Pool } from "./pool.ts";
@@ -337,6 +338,17 @@ export function createApp(
     },
   });
   const loginLimiter = createLoginLimiter();
+  const clients = new Map<number, Set<WebSocket>>();
+
+  const broadcast = (userId: number, message: unknown) => {
+    const sockets = clients.get(userId);
+    if (!sockets) return;
+
+    const data = JSON.stringify(message);
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(data);
+    }
+  };
 
   const loadTask = async (conn: Db, id: number, userId: number) => {
     const [task] = await conn.db
@@ -424,6 +436,24 @@ export function createApp(
 
     loginLimiter.clear(limitKey);
     return c.json({ token: await signToken(user.id, user.role) }, 200);
+  });
+
+  app.get("/ws", async (c) => {
+    const session = await verifyToken(c.req.query("token") ?? "");
+    if (!session) return c.text("Unauthorized", 401);
+
+    const { socket, response } = Deno.upgradeWebSocket(c.req.raw);
+    socket.onopen = () => {
+      const sockets = clients.get(session.userId) ?? new Set<WebSocket>();
+      sockets.add(socket);
+      clients.set(session.userId, sockets);
+    };
+    socket.onclose = () => {
+      const sockets = clients.get(session.userId);
+      sockets?.delete(socket);
+      if (sockets?.size === 0) clients.delete(session.userId);
+    };
+    return response;
   });
 
   // Every /api request borrows one pooled connection and returns it afterwards.
@@ -573,6 +603,7 @@ export function createApp(
       .returning();
     if (!task) return c.json({ error: "could not create task" }, 500);
 
+    broadcast(c.get("userId"), { type: "created", task });
     return c.json(task, 201);
   });
 
@@ -614,6 +645,7 @@ export function createApp(
       .where(ownVisible(id, userId))
       .returning();
     if (kv) await kv.delete(taskKey(userId, id));
+    if (task) broadcast(userId, { type: "updated", task });
     return task ? c.json(task, 200) : c.json({ error: "not found" }, 404);
   });
 
@@ -631,6 +663,7 @@ export function createApp(
       .where(ownVisible(id, userId))
       .returning({ id: tasks.id });
     if (kv) await kv.delete(taskKey(userId, id));
+    if (deleted) broadcast(userId, { type: "deleted", task: { id } });
     return deleted ? c.json({ ok: true }, 200) : c.json({ error: "not found" }, 404);
   });
 
@@ -648,7 +681,18 @@ export function createApp(
       .where(ownDeleted(id, userId))
       .returning();
     if (kv) await kv.delete(taskKey(userId, id));
+    if (task) broadcast(userId, { type: "restored", task });
     return task ? c.json(task, 200) : c.json({ error: "not found" }, 404);
+  });
+
+  app.openAPIRegistry.registerPath({
+    method: "get",
+    path: "/ws",
+    request: { query: z.object({ token: z.string() }) },
+    responses: {
+      101: { description: "WebSocket upgrade" },
+      401: errorResponse("Missing or invalid token"),
+    },
   });
 
   const AttachmentBodySchema = z.object({
