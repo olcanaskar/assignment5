@@ -63,7 +63,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 54 tests. They cover:
+`deno task test` runs 55 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -101,6 +101,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   validation failures.
 - **WebSocket (2):** a bad token gets 401, and a real WebSocket receives the created task
   for that user.
+- **Purge (1):** only old done tasks with a completion date are removed, and a second run
+  removes nothing.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -109,10 +111,10 @@ data. `app.request(...)` calls the Hono app directly; no server or port is neede
 
 ### Tables
 
-| Table   | Columns                                                                                              | Notes                                                                                                                                                                                                                                                         |
-| ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users` | `id`, `email`, `password_hash`, `role`, `created_at`                                                 | `email` is unique; the password is stored only as a bcrypt hash; `role` is `user` or `admin`.                                                                                                                                                                 |
-| `tasks` | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `attachment`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `attachment` is a generated file name; `deleted_at` is null until a soft delete. |
+| Table   | Columns                                                                                                              | Notes                                                                                                                                                                                                                                                                                           |
+| ------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users` | `id`, `email`, `password_hash`, `role`, `created_at`                                                                 | `email` is unique; the password is stored only as a bcrypt hash; `role` is `user` or `admin`.                                                                                                                                                                                                   |
+| `tasks` | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `attachment`, `completed_at`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `attachment` is a generated file name; `completed_at` is set while done; `deleted_at` is null until a soft delete. |
 
 `tasks.status` and `tasks.priority` are restricted twice: with the Drizzle
 `{ enum: [...] }` option for TypeScript, and with SQL `CHECK` constraints in the generated
@@ -163,6 +165,9 @@ the schema would run once at start-up and give every row the same timestamp.
 - **Live updates are per user.** `/ws?token=...` verifies the JWT before the upgrade and
   keeps `Map<number, Set<WebSocket>>`. Create, update, delete and restore send
   `{ type, task }` only to that user's sockets.
+- **Old done tasks are purged.** `purgeOldDone(db, 30)` hard-deletes done tasks whose
+  `completed_at` is older than 30 days; `Deno.cron` runs it daily at 03:00 and logs the
+  count. The job is idempotent.
 - **Zod validates the boundary.** `safeParse` produces the 400 body with `issues`; a bad
   token, an unknown route and a server error use `{ "error": "..." }`. `app.onError` logs
   the real error and returns only `internal error`.
@@ -263,7 +268,7 @@ already has one item:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":1}
+# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}],"page":1,"limit":20,"total":1}
 ```
 
 Without a token:
@@ -280,7 +285,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 ```sh
@@ -288,7 +293,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Run the test suite"}'
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 An empty title is a 400:
@@ -315,7 +320,7 @@ curl -s -X POST $BASE/api/tasks \
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":3}
+# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}],"page":1,"limit":20,"total":3}
 ```
 
 ### Summary per status (Bonus 3)
@@ -345,7 +350,7 @@ curl -s $BASE/api/admin/users -H "authorization: Bearer $DEMO2_TOKEN"
 
 ```sh
 curl -s $BASE/api/tasks/2 -H "authorization: Bearer $TOKEN"
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 A task that belongs to another user answers 404. After registering `bob@example.com` and
@@ -365,7 +370,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","status":"done","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 ### Pagination and filtering
@@ -373,7 +378,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
 ```sh
 curl -s "$BASE/api/tasks?page=1&limit=1&status=done" \
   -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":1,"total":1}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}],"page":1,"limit":1,"total":1}
 ```
 
 A bad limit is a 400, not a crash:
@@ -402,12 +407,12 @@ The list now has the other two tasks:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":2}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}],"page":1,"limit":20,"total":2}
 ```
 
 ```sh
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 Restoring a task that is not deleted is a 404:
@@ -624,7 +629,7 @@ curl -s -X DELETE $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 curl -s $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 # {"error":"not found"}
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
 ```
 
 `tests/bonus2_test.ts` covers the welcome task, delete hiding, restore, restore-visible
@@ -903,6 +908,34 @@ and create, update or delete a task from another terminal. The client prints eac
 `{ "type", "task" }` message; two browser tabs connected with the same token both receive
 it, while another user's tab receives nothing.
 
+## Bonus 14: A background job with Deno.cron
+
+`tasks.completed_at` (added by `drizzle/0006_wise_lila_cheney.sql`) is set when a task
+becomes `done` and cleared when it leaves `done`. `purgeOldDone(db, 30)` hard-deletes done
+tasks whose completion time is older than 30 days; tasks without `completed_at` are left
+alone.
+
+`src/main.ts` registers the job:
+
+```ts
+Deno.cron("purge old done tasks", "0 3 * * *", async () => {
+  const removed = await purgeOldDone(db, 30);
+  console.log(JSON.stringify({ job: "purge", removed }));
+});
+```
+
+`--unstable-cron` is in the `dev`, `start`, `start:prod`, `start:test` and `check` tasks.
+For a quick real check I used a temporary `* * * * *` schedule and got:
+
+```text
+cron registered
+{"job":"purge","removed":1}
+```
+
+`tests/purge_test.ts` inserts an old done task, a recent done task, an old todo task and a
+done task without a date. Only the old done task is removed, and a second run removes
+nothing, so the job is idempotent.
+
 ## Bonus 15: Rate limit on login
 
 `src/rateLimit.ts` keeps a `Map` from email to `{ count, resetAt }`. The login route
@@ -961,6 +994,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 11: Health, readiness and configuration**
 - **Bonus 12: File upload**
 - **Bonus 13: WebSocket live updates**
+- **Bonus 14: A background job with Deno.cron**
 - **Bonus 15: Rate limit on login**
 - **Bonus 16: A cache with Deno KV**
 
