@@ -1,0 +1,57 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno fmt --check
+      - run: deno lint
+      - run: deno task check
+      - run: deno task test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t tasks-api .
+      - run: docker volume create tasksdata
+      - run: docker run -d --name tasks-api -p 8000:8000 -v tasksdata:/data tasks-api
+      - name: Wait for the first container
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs tasks-api
+          exit 1
+      - name: Register a user
+        run: |
+          curl -sS -X POST http://localhost:8000/auth/register \
+            -H 'content-type: application/json' \
+            -d '{"email":"docker@example.com","password":"secret123"}'
+      - run: docker stop tasks-api
+      - run: docker rm tasks-api
+      - run: docker run -d --name tasks-api -p 8000:8000 -v tasksdata:/data tasks-api
+      - name: The data survives a restart
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then break; fi
+            sleep 1
+          done
+          code=$(curl -s -o /tmp/duplicate.json -w '%{http_code}' \
+            -X POST http://localhost:8000/auth/register \
+            -H 'content-type: application/json' \
+            -d '{"email":"docker@example.com","password":"secret123"}')
+          echo "duplicate status: $code"
+          cat /tmp/duplicate.json
+          test "$code" = "409"
+      - name: Image size
+        run: docker image ls tasks-api --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+      - if: always()
+        run: docker logs tasks-api || true

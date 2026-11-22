@@ -18,7 +18,7 @@ const db = createDb(config.databaseUrl);
 await migrate(db);
 const pool = await createDbPool(config.databaseUrl, 3);
 
-const kv = await Deno.openKv();
+const kv = config.kvPath ? await Deno.openKv(config.kvPath) : await Deno.openKv();
 
 Deno.cron("purge old done tasks", "0 3 * * *", async () => {
   const removed = await purgeOldDone(db, 30);

@@ -7,6 +7,7 @@ const ConfigSchema = z.object({
   jwtSecret: z.string().min(1).default("dev-secret"),
   appEnv: z.enum(["development", "test", "production"]).default("development"),
   uploadDir: z.string().min(1).default("./uploads"),
+  kvPath: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -24,6 +25,7 @@ export function loadConfig(
     jwtSecret: env.JWT_SECRET,
     appEnv: env.APP_ENV,
     uploadDir: env.UPLOAD_DIR,
+    kvPath: env.KV_PATH,
   });
 
   if (!parsed.success) {
