@@ -63,7 +63,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 52 tests. They cover:
+`deno task test` runs 54 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -99,6 +99,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   serves the Swagger UI page.
 - **Upload (2):** a PNG upload and download, owner-only access, and the 400/413/415 file
   validation failures.
+- **WebSocket (2):** a bad token gets 401, and a real WebSocket receives the created task
+  for that user.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -136,6 +138,7 @@ the schema would run once at start-up and give every row the same timestamp.
 | `POST /api/tasks/:id/restore`    | yes    | 200 restored task                        | 401, 404                                  |
 | `POST /api/tasks/:id/attachment` | yes    | 200 task with attachment                 | 400, 401, 404, 413, 415                   |
 | `GET /api/tasks/:id/attachment`  | yes    | 200 image bytes                          | 401, 404                                  |
+| `GET /ws?token=...`              | query  | 101 WebSocket upgrade                    | 401                                       |
 
 ### Why these decisions
 
@@ -157,6 +160,9 @@ the schema would run once at start-up and give every row the same timestamp.
   document and `/docs` serves Swagger UI with a Bearer Authorize button.
 - **Uploads use generated names.** Attachments are limited to 1 MB and PNG/JPEG, written
   under `uploads/` with a UUID name, and served only to the task owner.
+- **Live updates are per user.** `/ws?token=...` verifies the JWT before the upgrade and
+  keeps `Map<number, Set<WebSocket>>`. Create, update, delete and restore send
+  `{ type, task }` only to that user's sockets.
 - **Zod validates the boundary.** `safeParse` produces the 400 body with `issues`; a bad
   token, an unknown route and a server error use `{ "error": "..." }`. `app.onError` logs
   the real error and returns only `internal error`.
@@ -562,6 +568,18 @@ Element implicitly has an 'any' type because expression of type '"file"' can't b
 I changed it to `const body: Record<string, string | File> = ...`. The empty fallback is
 still a valid record, and the `file instanceof File` check handles the rest.
 
+### 12. The WebSocket test needed a real server
+
+`app.request()` can test that a bad token gets 401, but it cannot upgrade a real socket. I
+started `Deno.serve({ port: 0 }, app.fetch)` inside the test, read `server.addr.port`,
+connected with `new WebSocket(...)`, created a task through `fetch`, and received:
+
+```json
+{"type":"created","task":{"id":2,"title":"Live task",...}}
+```
+
+The test closes the socket and calls `server.shutdown()` in `finally`.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
@@ -859,6 +877,32 @@ uses the browser's file name. Replacing an attachment removes the old file.
 `tests/upload_test.ts` covers a successful PNG upload/download, another user's 404, a
 missing attachment 404, and the 400/413/415 validation failures.
 
+## Bonus 13: WebSocket live updates
+
+`GET /ws?token=...` checks the JWT before calling `Deno.upgradeWebSocket`; a bad token
+gets 401, and a browser can connect because the token travels in the query string (a
+browser cannot set an Authorization header on a WebSocket).
+
+The app keeps `Map<number, Set<WebSocket>>`. `onopen` adds the socket to the user's set
+and `onclose` removes it. After create, update, delete and restore, only that user's
+sockets receive a JSON message:
+
+```json
+{"type":"created","task":{"id":2,"title":"Live task",...}}
+```
+
+`tests/ws_test.ts` starts a real server on port 0, connects with a WebSocket, creates a
+task over HTTP and receives the message. The bad-token test checks the 401 before any
+upgrade. For a manual check, log in, then run:
+
+```sh
+deno run -A scripts/ws-client.ts "$TOKEN"
+```
+
+and create, update or delete a task from another terminal. The client prints each
+`{ "type", "task" }` message; two browser tabs connected with the same token both receive
+it, while another user's tab receives nothing.
+
 ## Bonus 15: Rate limit on login
 
 `src/rateLimit.ts` keeps a `Map` from email to `{ count, resetAt }`. The login route
@@ -916,6 +960,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 10: Logging and request ids**
 - **Bonus 11: Health, readiness and configuration**
 - **Bonus 12: File upload**
+- **Bonus 13: WebSocket live updates**
 - **Bonus 15: Rate limit on login**
 - **Bonus 16: A cache with Deno KV**
 
