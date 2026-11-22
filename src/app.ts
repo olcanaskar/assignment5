@@ -12,6 +12,7 @@ import {
 } from "./auth.ts";
 import { createLoginLimiter } from "./rateLimit.ts";
 import { tasks, users } from "./schema.ts";
+import { summaryGrouped } from "./summary.ts";
 
 const Credentials = z.object({
   email: z.email(),
@@ -163,6 +164,10 @@ export function createApp(db: Db) {
       .where(where);
 
     return c.json({ items, page, limit, total: row?.total ?? 0 });
+  });
+
+  app.get("/api/me/summary", async (c) => {
+    return c.json(await summaryGrouped(db, c.get("userId")));
   });
 
   app.post("/api/tasks", async (c) => {

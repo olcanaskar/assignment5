@@ -1,0 +1,1 @@
+CREATE INDEX `idx_tasks_user_status` ON `tasks` (`user_id`,`status`);

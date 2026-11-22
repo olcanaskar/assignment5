@@ -1,5 +1,5 @@
 // Abdullah Olcan Askar, 2024502180
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // Worked example: the users table.
@@ -32,6 +32,12 @@ export const tasks = sqliteTable("tasks", {
     .default("medium"),
   // SQL default: every row gets the time of its own insert, not the start-up time.
   createdAt: integer("created_at").notNull().default(sql`(strftime('%s','now'))`),
+  // Reserved for a future reminder feature; the migration adds it without a rewrite.
+  dueDate: integer("due_date"),
   // A soft delete sets this column; every normal query filters it out.
   deletedAt: integer("deleted_at"),
-});
+}, (table) => [
+  check("tasks_status_check", sql`${table.status} in ('todo', 'in-progress', 'done')`),
+  check("tasks_priority_check", sql`${table.priority} in ('low', 'medium', 'high')`),
+  index("idx_tasks_user_status").on(table.userId, table.status),
+]);
