@@ -86,7 +86,11 @@ export default function App() {
     try {
       await call(`/api/tasks/${t.id}`, token, {
         method: "PUT",
-        body: JSON.stringify({ title: t.title, status: NEXT[t.status] }),
+        body: JSON.stringify({
+          title: t.title,
+          status: NEXT[t.status],
+          priority: t.priority,
+        }),
       });
       load(token);
     } catch (err) {
