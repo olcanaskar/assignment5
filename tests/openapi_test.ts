@@ -22,6 +22,7 @@ Deno.test("Bonus 8: /openapi.json lists the routes and the Bearer scheme", async
       "/api/tasks",
       "/api/tasks/{id}",
       "/api/tasks/{id}/restore",
+      "/api/tasks/{id}/attachment",
       "/api/me/summary",
       "/api/admin/users",
     ]

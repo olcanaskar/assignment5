@@ -28,7 +28,8 @@
     "drizzle-orm/libsql/migrator": "npm:drizzle-orm@^0.44/libsql/migrator",
     "drizzle-kit": "npm:drizzle-kit@^0.31",
     "@libsql/client": "npm:@libsql/client@^0.15",
-    "@std/assert": "jsr:@std/assert@^1"
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/path": "jsr:@std/path@^1"
   },
   "fmt": {
     "lineWidth": 90

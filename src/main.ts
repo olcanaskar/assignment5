@@ -18,4 +18,7 @@ await migrate(db);
 const pool = await createDbPool(config.databaseUrl, 3);
 
 const kv = await Deno.openKv();
-Deno.serve({ port: config.port }, createApp(db, kv, pool).fetch);
+Deno.serve(
+  { port: config.port },
+  createApp(db, kv, pool, config.uploadDir).fetch,
+);

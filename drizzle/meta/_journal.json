@@ -36,6 +36,13 @@
       "when": 1795356655151,
       "tag": "0004_breezy_moonstone",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795357882387,
+      "tag": "0005_omniscient_wild_child",
+      "breakpoints": true
     }
   ]
 }

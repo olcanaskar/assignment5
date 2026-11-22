@@ -28,6 +28,8 @@ export const tasks = sqliteTable("tasks", {
   createdAt: integer("created_at").notNull().default(sql`(strftime('%s','now'))`),
   // Reserved for a future reminder feature; the migration adds it without a rewrite.
   dueDate: integer("due_date"),
+  // Generated file name for an image attachment; null when there is none.
+  attachment: text("attachment"),
   // A soft delete sets this column; every normal query filters it out.
   deletedAt: integer("deleted_at"),
 }, (table) => [

@@ -1,6 +1,7 @@
 // Abdullah Olcan Askar, 2024502180
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { join } from "@std/path";
 import type { Db } from "./db.ts";
 import {
   checkPassword,
@@ -47,6 +48,7 @@ const TaskSchema = z.object({
   priority: z.enum(["low", "medium", "high"]),
   createdAt: z.number(),
   dueDate: z.number().nullable(),
+  attachment: z.string().nullable(),
   deletedAt: z.number().nullable(),
 }).openapi("Task");
 const TaskPageSchema = z.object({
@@ -321,7 +323,12 @@ const ownDeleted = (id: number, userId: number) =>
  * Passing a Deno.Kv instance enables the 60-second task cache (Bonus 16).
  * Passing a pool makes every /api request borrow and return a connection (Bonus 6).
  */
-export function createApp(db: Db, kv?: Deno.Kv, pool?: Pool<Db>) {
+export function createApp(
+  db: Db,
+  kv?: Deno.Kv,
+  pool?: Pool<Db>,
+  uploadDir = "./uploads",
+) {
   const app = new OpenAPIHono<Env>({
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -466,6 +473,83 @@ export function createApp(db: Db, kv?: Deno.Kv, pool?: Pool<Db>) {
     return c.json(await summaryGrouped(c.get("db"), c.get("userId")), 200);
   });
 
+  app.post("/api/tasks/:id/attachment", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || id < 1) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const conn = c.get("db");
+    const userId = c.get("userId");
+    const [taskRow] = await conn.db
+      .select({ id: tasks.id, attachment: tasks.attachment })
+      .from(tasks)
+      .where(ownVisible(id, userId));
+    if (!taskRow) return c.json({ error: "not found" }, 404);
+
+    const body: Record<string, string | File> = await c.req
+      .parseBody()
+      .catch(() => ({}));
+    const file = body["file"];
+    if (!(file instanceof File)) {
+      return c.json({ error: "file required" }, 400);
+    }
+    if (file.size > 1_000_000) {
+      return c.json({ error: "too large" }, 413);
+    }
+    if (!["image/png", "image/jpeg"].includes(file.type)) {
+      return c.json({ error: "type not allowed" }, 415);
+    }
+
+    await Deno.mkdir(uploadDir, { recursive: true });
+    const extension = file.type === "image/png" ? ".png" : ".jpg";
+    const filename = `${crypto.randomUUID()}${extension}`;
+    await Deno.writeFile(
+      join(uploadDir, filename),
+      new Uint8Array(await file.arrayBuffer()),
+    );
+
+    const [updated] = await conn.db
+      .update(tasks)
+      .set({ attachment: filename })
+      .where(ownVisible(id, userId))
+      .returning();
+    if (kv) await kv.delete(taskKey(userId, id));
+
+    if (taskRow.attachment) {
+      await Deno.remove(join(uploadDir, taskRow.attachment)).catch(() => {});
+    }
+
+    return c.json(updated, 200);
+  });
+
+  app.get("/api/tasks/:id/attachment", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || id < 1) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const conn = c.get("db");
+    const userId = c.get("userId");
+    const [taskRow] = await conn.db
+      .select({ attachment: tasks.attachment })
+      .from(tasks)
+      .where(ownVisible(id, userId));
+    if (!taskRow?.attachment) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const bytes = await Deno.readFile(join(uploadDir, taskRow.attachment))
+      .catch(() => null);
+    if (!bytes) return c.json({ error: "not found" }, 404);
+
+    const contentType = taskRow.attachment.endsWith(".png") ? "image/png" : "image/jpeg";
+    return c.body(bytes, 200, {
+      "content-type": contentType,
+      "content-disposition": `inline; filename="${taskRow.attachment}"`,
+    });
+  });
+
   app.use("/api/admin/users", requireRole("admin"));
   app.openapi(adminUsersRoute, async (c) => {
     const conn = c.get("db");
@@ -565,6 +649,52 @@ export function createApp(db: Db, kv?: Deno.Kv, pool?: Pool<Db>) {
       .returning();
     if (kv) await kv.delete(taskKey(userId, id));
     return task ? c.json(task, 200) : c.json({ error: "not found" }, 404);
+  });
+
+  const AttachmentBodySchema = z.object({
+    file: z.string().openapi({ type: "string", format: "binary" }),
+  }).openapi("AttachmentBody");
+
+  app.openAPIRegistry.registerPath({
+    method: "post",
+    path: "/api/tasks/{id}/attachment",
+    security,
+    request: {
+      params: IdParams,
+      body: {
+        content: { "multipart/form-data": { schema: AttachmentBodySchema } },
+      },
+    },
+    responses: {
+      200: taskResponse("Attachment saved"),
+      400: validationResponse("File missing"),
+      401: errorResponse("Missing or invalid token"),
+      404: errorResponse("Task not found"),
+      413: errorResponse("File too large"),
+      415: errorResponse("Unsupported file type"),
+    },
+  });
+
+  app.openAPIRegistry.registerPath({
+    method: "get",
+    path: "/api/tasks/{id}/attachment",
+    security,
+    request: { params: IdParams },
+    responses: {
+      200: {
+        description: "Image bytes",
+        content: {
+          "image/png": {
+            schema: z.string().openapi({ type: "string", format: "binary" }),
+          },
+          "image/jpeg": {
+            schema: z.string().openapi({ type: "string", format: "binary" }),
+          },
+        },
+      },
+      401: errorResponse("Missing or invalid token"),
+      404: errorResponse("Task or attachment not found"),
+    },
   });
 
   app.openAPIRegistry.registerComponent("securitySchemes", "Bearer", {

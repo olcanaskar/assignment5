@@ -6,6 +6,7 @@ const ConfigSchema = z.object({
   databaseUrl: z.string().min(1).default("file:./tasks.db"),
   jwtSecret: z.string().min(1).default("dev-secret"),
   appEnv: z.enum(["development", "test", "production"]).default("development"),
+  uploadDir: z.string().min(1).default("./uploads"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -22,6 +23,7 @@ export function loadConfig(
     databaseUrl: env.DATABASE_URL,
     jwtSecret: env.JWT_SECRET,
     appEnv: env.APP_ENV,
+    uploadDir: env.UPLOAD_DIR,
   });
 
   if (!parsed.success) {
