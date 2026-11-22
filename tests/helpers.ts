@@ -49,7 +49,30 @@ export async function registerAndLogin(
   }
 
   const body = await loggedIn.json() as { token: string };
-  return body.token;
+  const token = body.token;
+
+  // Registration creates a welcome task (Bonus 2). The task tests count rows,
+  // so remove that setup row from the visible list first.
+  const listed = await app.request("/api/tasks", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (listed.status !== 200) {
+    throw new Error(`welcome task list failed: ${listed.status}`);
+  }
+
+  const page = await listed.json() as { items: { id: number; title: string }[] };
+  const welcome = page.items.find((task) => task.title.startsWith("Welcome!"));
+  if (welcome) {
+    const removed = await app.request(`/api/tasks/${welcome.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (removed.status !== 200) {
+      throw new Error(`welcome task delete failed: ${removed.status}`);
+    }
+  }
+
+  return token;
 }
 
 export function createTask(

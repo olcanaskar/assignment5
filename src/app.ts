@@ -1,6 +1,6 @@
 // Abdullah Olcan Askar, 2024502180
 import { Hono } from "hono";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "./db.ts";
 import {
@@ -30,9 +30,13 @@ const TaskQuery = z.object({
   status: z.enum(["todo", "in-progress", "done"]).optional(),
 });
 
-/** Every task lookup includes the owner, so another user's task simply does not exist. */
-const own = (id: number, userId: number) =>
-  and(eq(tasks.id, id), eq(tasks.userId, userId));
+/** A visible task belongs to the user and has not been soft-deleted. */
+const ownVisible = (id: number, userId: number) =>
+  and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt));
+
+/** Only restore may look at a deleted task, and it still has to belong to the user. */
+const ownDeleted = (id: number, userId: number) =>
+  and(eq(tasks.id, id), eq(tasks.userId, userId), isNotNull(tasks.deletedAt));
 
 /** Build the whole application around a database, so tests can give it their own. */
 export function createApp(db: Db) {
@@ -87,11 +91,20 @@ export function createApp(db: Db) {
       .where(eq(users.email, email));
     if (existing) return c.json({ error: "email already taken" }, 409);
 
-    const [user] = await db.db
-      .insert(users)
-      .values({ email, passwordHash: await hashPassword(password) })
-      .returning({ id: users.id, email: users.email });
-    if (!user) return c.json({ error: "could not create user" }, 500);
+    const passwordHash = await hashPassword(password);
+    const user = await db.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(users)
+        .values({ email, passwordHash })
+        .returning({ id: users.id, email: users.email });
+      if (!created) throw new Error("could not create user");
+
+      await tx.insert(tasks).values({
+        userId: created.id,
+        title: "Welcome! Add your first task.",
+      });
+      return created;
+    });
 
     return c.json(user, 201);
   });
@@ -133,9 +146,8 @@ export function createApp(db: Db) {
 
     const { page, limit, status } = parsed.data;
     const userId = c.get("userId");
-    const where = status
-      ? and(eq(tasks.userId, userId), eq(tasks.status, status))
-      : eq(tasks.userId, userId);
+    const visible = and(eq(tasks.userId, userId), isNull(tasks.deletedAt));
+    const where = status ? and(visible, eq(tasks.status, status)) : visible;
 
     const items = await db.db
       .select()
@@ -177,7 +189,7 @@ export function createApp(db: Db) {
     const [task] = await db.db
       .select()
       .from(tasks)
-      .where(own(id, c.get("userId")));
+      .where(ownVisible(id, c.get("userId")));
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
@@ -195,7 +207,7 @@ export function createApp(db: Db) {
     const [task] = await db.db
       .update(tasks)
       .set(parsed.data)
-      .where(own(id, c.get("userId")))
+      .where(ownVisible(id, c.get("userId")))
       .returning();
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
@@ -207,10 +219,25 @@ export function createApp(db: Db) {
     }
 
     const [deleted] = await db.db
-      .delete(tasks)
-      .where(own(id, c.get("userId")))
+      .update(tasks)
+      .set({ deletedAt: sql`(strftime('%s','now'))` })
+      .where(ownVisible(id, c.get("userId")))
       .returning({ id: tasks.id });
     return deleted ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+  });
+
+  app.post("/api/tasks/:id/restore", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || id < 1) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const [task] = await db.db
+      .update(tasks)
+      .set({ deletedAt: null })
+      .where(ownDeleted(id, c.get("userId")))
+      .returning();
+    return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
   app.notFound((c) => c.json({ error: "not found", requestId: c.get("requestId") }, 404));

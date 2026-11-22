@@ -32,4 +32,6 @@ export const tasks = sqliteTable("tasks", {
     .default("medium"),
   // SQL default: every row gets the time of its own insert, not the start-up time.
   createdAt: integer("created_at").notNull().default(sql`(strftime('%s','now'))`),
+  // A soft delete sets this column; every normal query filters it out.
+  deletedAt: integer("deleted_at"),
 });

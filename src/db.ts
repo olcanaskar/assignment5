@@ -34,7 +34,8 @@ export async function migrate({ client }: Db) {
          CHECK (status IN ('todo', 'in-progress', 'done')),
        priority TEXT NOT NULL DEFAULT 'medium'
          CHECK (priority IN ('low', 'medium', 'high')),
-       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+       deleted_at INTEGER
      )`,
   ]);
 }
