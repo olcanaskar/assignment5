@@ -63,11 +63,11 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 55 tests. They cover:
+`deno task test` runs 56 tests. They cover:
 
-- **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
-  wrong password and unknown email both 401 with the same message, missing and unknown
-  token 401.
+- **Auth (8):** register 201, duplicate email 409, bad body 400, malformed JSON 400, login
+  200 with a token, wrong password and unknown email both 401 with the same message,
+  missing and unknown token 401.
 - **Tasks (12):** table defaults, no token 401, create and list, owner and default fields,
   empty title 400, invalid status 400, another user's task 404 for read/update/delete,
   owner update and delete, pagination, bad query 400, status filter, unknown route 404.
@@ -625,6 +625,18 @@ After the fix, Render rebuilt the Docker image. `/health` returned `{"ok":true}`
 tested register, login, task creation and listing against
 `https://tasks-api-f30l.onrender.com`. `/openapi.json` and `/docs` also returned 200. The
 database lives in Turso; Render’s `/tmp` cache and uploads are ephemeral on the free plan.
+
+### 17. Malformed JSON was a 500
+
+I sent `{not-json` to `/auth/register` and expected 400. The zod-openapi validator threw
+an `HTTPException` with status 400, but my `app.onError` caught every error as a 500:
+
+```json
+{ "error": "internal error", "requestId": "..." }
+```
+
+I added an `HTTPException` branch that returns its real status and message, and a test
+that checks the 400 plus the request id. The normal 500 path still hides internal details.
 
 ## Bonus 1: Migrations with Drizzle Kit
 

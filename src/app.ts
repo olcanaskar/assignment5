@@ -1,5 +1,6 @@
 // Abdullah Olcan Askar, 2024502180
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
 import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { join } from "@std/path";
 import type { Db } from "./db.ts";
@@ -769,6 +770,13 @@ export function createApp(
   app.notFound((c) => c.json({ error: "not found", requestId: c.get("requestId") }, 404));
 
   app.onError((err, c) => {
+    if (err instanceof HTTPException) {
+      return c.json(
+        { error: err.message, requestId: c.get("requestId") },
+        err.status,
+      );
+    }
+
     console.error(err); // details go to the log, not to the client
     return c.json({ error: "internal error", requestId: c.get("requestId") }, 500);
   });

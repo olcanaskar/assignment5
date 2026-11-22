@@ -89,3 +89,17 @@ Deno.test("R3: an unknown bearer token is 401", async () => {
   assertEquals(res.status, 401);
   assertEquals(await res.json(), { error: "unauthorized" });
 });
+
+Deno.test("R5: malformed JSON is a 400 with the error shape", async () => {
+  const app = await freshApp();
+  const res = await app.request("/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{not-json",
+  });
+  assertEquals(res.status, 400);
+
+  const body = await res.json() as { error: string; requestId: string };
+  assertEquals(typeof body.error, "string");
+  assertEquals(body.requestId, res.headers.get("x-request-id"));
+});
