@@ -30,6 +30,8 @@ export const tasks = sqliteTable("tasks", {
   dueDate: integer("due_date"),
   // Generated file name for an image attachment; null when there is none.
   attachment: text("attachment"),
+  // Set when the task becomes done; cleared when it leaves done.
+  completedAt: integer("completed_at"),
   // A soft delete sets this column; every normal query filters it out.
   deletedAt: integer("deleted_at"),
 }, (table) => [

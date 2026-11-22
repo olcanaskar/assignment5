@@ -11,6 +11,7 @@ Deno.test("Bonus 1/4: migrations create the new column and the index", async () 
   const columnNames = columns.rows.map((row) => String(row.name));
   assertEquals(columnNames.includes("deleted_at"), true);
   assertEquals(columnNames.includes("due_date"), true);
+  assertEquals(columnNames.includes("completed_at"), true);
 
   const indexes = await db.client.execute("PRAGMA index_list(tasks)");
   const indexNames = indexes.rows.map((row) => String(row.name));

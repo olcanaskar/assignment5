@@ -74,12 +74,17 @@ export async function seedDemoData(db: Db): Promise<SeedResult> {
       continue;
     }
 
-    const values = TITLES.map((title, taskIndex) => ({
-      userId,
-      title,
-      status: STATUSES[(taskIndex + userIndex) % STATUSES.length],
-      priority: PRIORITIES[(taskIndex + userIndex) % PRIORITIES.length],
-    }));
+    const now = Math.floor(Date.now() / 1000);
+    const values = TITLES.map((title, taskIndex) => {
+      const status = STATUSES[(taskIndex + userIndex) % STATUSES.length];
+      return {
+        userId,
+        title,
+        status,
+        priority: PRIORITIES[(taskIndex + userIndex) % PRIORITIES.length],
+        completedAt: status === "done" ? now : null,
+      };
+    });
     await db.db.insert(tasks).values(values);
     createdTasks += values.length;
   }

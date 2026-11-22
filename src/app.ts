@@ -50,6 +50,7 @@ const TaskSchema = z.object({
   createdAt: z.number(),
   dueDate: z.number().nullable(),
   attachment: z.string().nullable(),
+  completedAt: z.number().nullable(),
   deletedAt: z.number().nullable(),
 }).openapi("Task");
 const TaskPageSchema = z.object({
@@ -599,7 +600,11 @@ export function createApp(
     const conn = c.get("db");
     const [task] = await conn.db
       .insert(tasks)
-      .values({ userId: c.get("userId"), ...body })
+      .values({
+        userId: c.get("userId"),
+        ...body,
+        completedAt: body.status === "done" ? sql`(strftime('%s','now'))` : null,
+      })
       .returning();
     if (!task) return c.json({ error: "could not create task" }, 500);
 
@@ -641,7 +646,10 @@ export function createApp(
     const userId = c.get("userId");
     const [task] = await conn.db
       .update(tasks)
-      .set(body)
+      .set({
+        ...body,
+        completedAt: body.status === "done" ? sql`(strftime('%s','now'))` : null,
+      })
       .where(ownVisible(id, userId))
       .returning();
     if (kv) await kv.delete(taskKey(userId, id));

@@ -26,6 +26,7 @@ Deno.test("R2: tasks table stores a task with the SQL defaults", async () => {
   assertEquals(task.status, "todo");
   assertEquals(task.priority, "medium");
   assertEquals(typeof task.createdAt, "number");
+  assertEquals(task.completedAt, null);
   assertEquals(task.deletedAt, null);
 });
 
