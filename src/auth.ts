@@ -30,8 +30,8 @@ export async function userIdFromToken(db: Db, token: string): Promise<number | n
   return id === undefined ? null : Number(id);
 }
 
-/** Routes behind requireAuth can read the logged-in user id with c.get("userId"). */
-export type Env = { Variables: { userId: number } };
+/** Values that middleware stores on the Hono context for the route handlers. */
+export type Env = { Variables: { userId: number; requestId: string } };
 
 /**
  * Read the bearer token, find its session, and either stop with 401 or store

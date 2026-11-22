@@ -10,6 +10,7 @@ import {
   hashPassword,
   requireAuth,
 } from "./auth.ts";
+import { createLoginLimiter } from "./rateLimit.ts";
 import { tasks, users } from "./schema.ts";
 
 const Credentials = z.object({
@@ -36,9 +37,42 @@ const own = (id: number, userId: number) =>
 /** Build the whole application around a database, so tests can give it their own. */
 export function createApp(db: Db) {
   const app = new Hono<Env>();
+  const loginLimiter = createLoginLimiter();
+
+  // One JSON log line per request, with an id that clients can quote in a bug report.
+  app.use("*", async (c, next) => {
+    const requestId = crypto.randomUUID();
+    c.set("requestId", requestId);
+    c.header("x-request-id", requestId);
+    const start = performance.now();
+
+    try {
+      await next();
+    } finally {
+      console.log(JSON.stringify({
+        requestId,
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res?.status ?? 500,
+        ms: Math.round(performance.now() - start),
+      }));
+    }
+  });
 
   // Worked example: a health check.
   app.get("/health", (c) => c.json({ ok: true }));
+
+  // Render and other platforms use these two names for liveness and readiness.
+  app.get("/healthz", (c) => c.json({ ok: true }));
+
+  app.get("/readyz", async (c) => {
+    try {
+      await db.client.execute("SELECT 1");
+      return c.json({ ready: true });
+    } catch {
+      return c.json({ ready: false }, 503);
+    }
+  });
 
   app.post("/auth/register", async (c) => {
     const parsed = Credentials.safeParse(await c.req.json().catch(() => ({})));
@@ -69,12 +103,22 @@ export function createApp(db: Db) {
     }
 
     const { email, password } = parsed.data;
+    const limitKey = email.toLowerCase();
+
+    const retryAfter = loginLimiter.retryAfter(limitKey);
+    if (retryAfter !== null) {
+      c.header("Retry-After", String(retryAfter));
+      return c.json({ error: "too many login attempts" }, 429);
+    }
+
     const [user] = await db.db.select().from(users).where(eq(users.email, email));
     const valid = user ? await checkPassword(password, user.passwordHash) : false;
     if (!user || !valid) {
+      loginLimiter.recordFailure(limitKey);
       return c.json({ error: "invalid email or password" }, 401);
     }
 
+    loginLimiter.clear(limitKey);
     return c.json({ token: await createSession(db, user.id) });
   });
 
@@ -169,11 +213,11 @@ export function createApp(db: Db) {
     return deleted ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
   });
 
-  app.notFound((c) => c.json({ error: "not found" }, 404));
+  app.notFound((c) => c.json({ error: "not found", requestId: c.get("requestId") }, 404));
 
   app.onError((err, c) => {
     console.error(err); // details go to the log, not to the client
-    return c.json({ error: "internal error" }, 500);
+    return c.json({ error: "internal error", requestId: c.get("requestId") }, 500);
   });
 
   return app;

@@ -242,5 +242,8 @@ Deno.test("R5: an unknown route uses the same error shape", async () => {
   const app = await freshApp();
   const res = await app.request("/does-not-exist");
   assertEquals(res.status, 404);
-  assertEquals(await res.json(), { error: "not found" });
+
+  const body = await res.json() as { error: string; requestId: string };
+  assertEquals(body.error, "not found");
+  assertEquals(body.requestId, res.headers.get("x-request-id"));
 });
