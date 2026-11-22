@@ -16,10 +16,15 @@ export async function createDbPool(
   }
 
   const items: Db[] = [];
+  // Hosted libSQL (Turso) rejects PRAGMA journal_mode=WAL. Those settings only
+  // make sense for a local SQLite file.
+  const localFile = url.startsWith("file:");
   for (let index = 0; index < size; index++) {
     const db = createDb(url, { authToken });
-    await db.client.execute("PRAGMA journal_mode=WAL");
-    await db.client.execute("PRAGMA busy_timeout=5000");
+    if (localFile) {
+      await db.client.execute("PRAGMA journal_mode=WAL");
+      await db.client.execute("PRAGMA busy_timeout=5000");
+    }
     items.push(db);
   }
   return new Pool(items);

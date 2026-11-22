@@ -604,6 +604,20 @@ Set the DENO_DEPLOY_TOKEN environment variable or use --token.
 I prepared the Turso/libSQL token support and documented the deploy steps, but I cannot
 create a public URL without an account and token. That is why Bonus 19 is not claimed.
 
+### 15. Turso rejected `PRAGMA journal_mode=WAL`
+
+The first Render deploy exited with status 1:
+
+```text
+LibsqlError: SQL_PARSE_ERROR: SQL not allowed statement: PRAGMA journal_mode=WAL
+    at async createDbPool (file:///app/src/dbPool.ts:21:5)
+```
+
+WAL and `busy_timeout` are local SQLite settings; hosted libSQL manages concurrency itself
+and rejects the pragma. I changed `createDbPool` to run both pragmas only when the URL
+starts with `file:`. The local pool tests still pass, and the remote pool no longer sends
+the statement.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
