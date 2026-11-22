@@ -61,7 +61,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 46 tests. They cover:
+`deno task test` runs 48 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -91,6 +91,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   for an admin.
 - **Cache (1):** the first GET reads the database, the second is a cache hit, an API
   update invalidates the key, another user cannot hit the key, and DELETE removes it.
+- **Pool (2):** 20 jobs on a pool of 3 never run more than 3 at once, and 20 concurrent
+  task requests borrow and release pooled connections correctly.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -661,6 +663,29 @@ exit: 1
 The demo login `demo1@example.com` / `secret123` returns ten tasks; `demo2@example.com` is
 the admin. `tests/seed_test.ts` checks the counts, the admin role and the second run.
 
+## Bonus 6: A connection pool (Postgres or SQLite)
+
+I chose **option B, the SQLite pool**, which counts as two bonuses.
+
+`src/pool.ts` contains the generic `Pool<T>`: `acquire()` returns an idle item or waits in
+a FIFO queue, `release()` hands the item directly to the next waiter, and `use()` always
+releases in a `finally`.
+
+`src/dbPool.ts` opens three libSQL clients on the same SQLite file and runs
+`PRAGMA journal_mode=WAL` and `PRAGMA busy_timeout=5000` on each. `main.ts` builds the
+pool and passes it to `createApp`. A middleware on `/api/*` borrows one connection, stores
+it on the context, and releases it in `finally`; the task routes read it with
+`c.get("db")`.
+
+The pool size is **3**: enough to show queueing without opening many SQLite handles. When
+all three are busy, `acquire()` waits; `release()` wakes the next waiter. Real proof is in
+`tests/pool_test.ts`: 20 jobs on a pool of 3 never run more than 3 at once, all 20 finish,
+and 20 concurrent task requests return 200.
+
+SQLite gains less from a pool than Postgres because it still has one writer; WAL lets
+readers continue while a writer works, and `busy_timeout` waits instead of failing
+immediately. Postgres could run writes in parallel, so a pool matters more there.
+
 ## Bonus 7: JWT instead of sessions
 
 `src/auth.ts` uses `jose`. Login signs a one-hour HS256 token with `sub` and `role`;
@@ -817,6 +842,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 3: Joins and the N+1 problem**
 - **Bonus 4: Indexes and EXPLAIN**
 - **Bonus 5: Seed data**
+- **Bonus 6: A connection pool (Postgres or SQLite)**
 - **Bonus 7: JWT instead of sessions**
 - **Bonus 9: Roles (RBAC)**
 - **Bonus 10: Logging and request ids**
