@@ -63,7 +63,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 50 tests. They cover:
+`deno task test` runs 52 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -97,6 +97,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   task requests borrow and release pooled connections correctly.
 - **OpenAPI (2):** `/openapi.json` lists the routes and the Bearer scheme, and `/docs`
   serves the Swagger UI page.
+- **Upload (2):** a PNG upload and download, owner-only access, and the 400/413/415 file
+  validation failures.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -105,10 +107,10 @@ data. `app.request(...)` calls the Hono app directly; no server or port is neede
 
 ### Tables
 
-| Table   | Columns                                                                                | Notes                                                                                                                                                                                                                  |
-| ------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users` | `id`, `email`, `password_hash`, `role`, `created_at`                                   | `email` is unique; the password is stored only as a bcrypt hash; `role` is `user` or `admin`.                                                                                                                          |
-| `tasks` | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `deleted_at` is null until a soft delete. |
+| Table   | Columns                                                                                              | Notes                                                                                                                                                                                                                                                         |
+| ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users` | `id`, `email`, `password_hash`, `role`, `created_at`                                                 | `email` is unique; the password is stored only as a bcrypt hash; `role` is `user` or `admin`.                                                                                                                                                                 |
+| `tasks` | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `attachment`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `attachment` is a generated file name; `deleted_at` is null until a soft delete. |
 
 `tasks.status` and `tasks.priority` are restricted twice: with the Drizzle
 `{ enum: [...] }` option for TypeScript, and with SQL `CHECK` constraints in the generated
@@ -119,19 +121,21 @@ the schema would run once at start-up and give every row the same timestamp.
 
 ### Routes
 
-| Method and path               | Token? | Success                                  | Main failures                             |
-| ----------------------------- | ------ | ---------------------------------------- | ----------------------------------------- |
-| `GET /health`                 | no     | 200 `{ "ok": true }`                     | -                                         |
-| `POST /auth/register`         | no     | 201 `{ id, email }`                      | 400 bad body, 409 email taken             |
-| `POST /auth/login`            | no     | 200 `{ token }`                          | 400 bad body, 401 wrong email or password |
-| `GET /api/tasks`              | yes    | 200 `{ items, page, limit, total }`      | 400 bad query, 401                        |
-| `GET /api/me/summary`         | yes    | 200 `{ todo, in-progress, done, total }` | 401                                       |
-| `GET /api/admin/users`        | admin  | 200 `{ items }`                          | 401, 403                                  |
-| `POST /api/tasks`             | yes    | 201 task                                 | 400, 401                                  |
-| `GET /api/tasks/:id`          | yes    | 200 task                                 | 401, 404                                  |
-| `PUT /api/tasks/:id`          | yes    | 200 updated task                         | 400, 401, 404                             |
-| `DELETE /api/tasks/:id`       | yes    | 200 `{ "ok": true }`, soft delete        | 401, 404                                  |
-| `POST /api/tasks/:id/restore` | yes    | 200 restored task                        | 401, 404                                  |
+| Method and path                  | Token? | Success                                  | Main failures                             |
+| -------------------------------- | ------ | ---------------------------------------- | ----------------------------------------- |
+| `GET /health`                    | no     | 200 `{ "ok": true }`                     | -                                         |
+| `POST /auth/register`            | no     | 201 `{ id, email }`                      | 400 bad body, 409 email taken             |
+| `POST /auth/login`               | no     | 200 `{ token }`                          | 400 bad body, 401 wrong email or password |
+| `GET /api/tasks`                 | yes    | 200 `{ items, page, limit, total }`      | 400 bad query, 401                        |
+| `GET /api/me/summary`            | yes    | 200 `{ todo, in-progress, done, total }` | 401                                       |
+| `GET /api/admin/users`           | admin  | 200 `{ items }`                          | 401, 403                                  |
+| `POST /api/tasks`                | yes    | 201 task                                 | 400, 401                                  |
+| `GET /api/tasks/:id`             | yes    | 200 task                                 | 401, 404                                  |
+| `PUT /api/tasks/:id`             | yes    | 200 updated task                         | 400, 401, 404                             |
+| `DELETE /api/tasks/:id`          | yes    | 200 `{ "ok": true }`, soft delete        | 401, 404                                  |
+| `POST /api/tasks/:id/restore`    | yes    | 200 restored task                        | 401, 404                                  |
+| `POST /api/tasks/:id/attachment` | yes    | 200 task with attachment                 | 400, 401, 404, 413, 415                   |
+| `GET /api/tasks/:id/attachment`  | yes    | 200 image bytes                          | 401, 404                                  |
 
 ### Why these decisions
 
@@ -151,6 +155,8 @@ the schema would run once at start-up and give every row the same timestamp.
 - **The API documents itself.** The app is an `OpenAPIHono`; every route is described with
   `createRoute` and the same Zod schemas used for validation. `/openapi.json` serves the
   document and `/docs` serves Swagger UI with a Bearer Authorize button.
+- **Uploads use generated names.** Attachments are limited to 1 MB and PNG/JPEG, written
+  under `uploads/` with a UUID name, and served only to the task owner.
 - **Zod validates the boundary.** `safeParse` produces the 400 body with `issues`; a bad
   token, an unknown route and a server error use `{ "error": "..." }`. `app.onError` logs
   the real error and returns only `internal error`.
@@ -251,7 +257,7 @@ already has one item:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":1}
+# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":1}
 ```
 
 Without a token:
@@ -268,7 +274,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 ```sh
@@ -276,7 +282,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Run the test suite"}'
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 An empty title is a 400:
@@ -303,7 +309,7 @@ curl -s -X POST $BASE/api/tasks \
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":3}
+# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":3}
 ```
 
 ### Summary per status (Bonus 3)
@@ -333,7 +339,7 @@ curl -s $BASE/api/admin/users -H "authorization: Bearer $DEMO2_TOKEN"
 
 ```sh
 curl -s $BASE/api/tasks/2 -H "authorization: Bearer $TOKEN"
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 A task that belongs to another user answers 404. After registering `bob@example.com` and
@@ -353,7 +359,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","status":"done","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 ### Pagination and filtering
@@ -361,7 +367,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
 ```sh
 curl -s "$BASE/api/tasks?page=1&limit=1&status=done" \
   -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":1,"total":1}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":1,"total":1}
 ```
 
 A bad limit is a 400, not a crash:
@@ -390,12 +396,12 @@ The list now has the other two tasks:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":2}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}],"page":1,"limit":20,"total":2}
 ```
 
 ```sh
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 Restoring a task that is not deleted is a 404:
@@ -544,6 +550,18 @@ moved `requireRole` to `app.use("/api/admin/users", requireRole("admin"))` and p
 explicit statuses (`c.json(task, 200)`, `c.json({ ok: true }, 200)`). After that
 `deno check` passed.
 
+### 11. `c.req.parseBody()` needed a concrete record type
+
+The upload handler did `const body = await c.req.parseBody().catch(() => ({}))` and
+TypeScript rejected `body["file"]`:
+
+```text
+Element implicitly has an 'any' type because expression of type '"file"' can't be used to index type '{ [x: string]: string | File; } | {}'.
+```
+
+I changed it to `const body: Record<string, string | File> = ...`. The empty fallback is
+still a valid record, and the `file instanceof File` check handles the rest.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
@@ -588,7 +606,7 @@ curl -s -X DELETE $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 curl -s $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 # {"error":"not found"}
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"attachment":null,"deletedAt":null}
 ```
 
 `tests/bonus2_test.ts` covers the welcome task, delete hiding, restore, restore-visible
@@ -826,6 +844,21 @@ exit: 1
 `tests/health_test.ts` covers healthz, a healthy readyz and a failing readyz (503).
 `start:test` was also run on port 8001, where `/healthz` and `/readyz` answered 200.
 
+## Bonus 12: File upload
+
+`tasks.attachment` is a nullable generated filename
+(`drizzle/0005_omniscient_wild_child.sql`). `POST /api/tasks/:id/attachment` reads the
+multipart form, checks that `file` is a `File` (400), at most 1 MB (413), and
+`image/png`/`image/jpeg` (415), then writes it under `uploads/` with a UUID name. It never
+uses the browser's file name. Replacing an attachment removes the old file.
+
+`GET /api/tasks/:id/attachment` checks the owner and streams the bytes with the right
+`content-type`; another user or a task without an attachment gets 404. `uploads/` is in
+`.gitignore`. Both attachment routes are also registered in the OpenAPI document.
+
+`tests/upload_test.ts` covers a successful PNG upload/download, another user's 404, a
+missing attachment 404, and the 400/413/415 validation failures.
+
 ## Bonus 15: Rate limit on login
 
 `src/rateLimit.ts` keeps a `Map` from email to `{ count, resetAt }`. The login route
@@ -882,6 +915,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 9: Roles (RBAC)**
 - **Bonus 10: Logging and request ids**
 - **Bonus 11: Health, readiness and configuration**
+- **Bonus 12: File upload**
 - **Bonus 15: Rate limit on login**
 - **Bonus 16: A cache with Deno KV**
 
