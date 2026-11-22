@@ -23,7 +23,9 @@ cp .env.example .env
 deno task dev
 ```
 
-The API listens on <http://localhost:8000>. In a second terminal:
+The API listens on <http://localhost:8000>. The OpenAPI document is at
+<http://localhost:8000/openapi.json> and Swagger UI is at <http://localhost:8000/docs>. In
+a second terminal:
 
 ```sh
 deno task test
@@ -61,7 +63,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 48 tests. They cover:
+`deno task test` runs 50 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -93,6 +95,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   update invalidates the key, another user cannot hit the key, and DELETE removes it.
 - **Pool (2):** 20 jobs on a pool of 3 never run more than 3 at once, and 20 concurrent
   task requests borrow and release pooled connections correctly.
+- **OpenAPI (2):** `/openapi.json` lists the routes and the Bearer scheme, and `/docs`
+  serves the Swagger UI page.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -144,6 +148,9 @@ the schema would run once at start-up and give every row the same timestamp.
   user gets 403, no token gets 401. The seed makes `demo2@example.com` the admin.
 - **The task cache is per user.** GET one task uses a Deno KV key `["task", userId, id]`
   with a 60-second TTL; update, delete and restore delete the key.
+- **The API documents itself.** The app is an `OpenAPIHono`; every route is described with
+  `createRoute` and the same Zod schemas used for validation. `/openapi.json` serves the
+  document and `/docs` serves Swagger UI with a Bearer Authorize button.
 - **Zod validates the boundary.** `safeParse` produces the 400 body with `issues`; a bad
   token, an unknown route and a server error use `{ "error": "..." }`. `app.onError` logs
   the real error and returns only `internal error`.
@@ -528,6 +535,15 @@ function
 I added `--unstable-kv` to the `dev`, `start`, `start:prod`, `start:test`, `test` and
 `check` tasks. Without the flag the server would not start with the cache code.
 
+### 10. OpenAPIHono rejected my union responses
+
+When I converted `app.ts`, TypeScript rejected
+`app.openapi(route, requireRole("admin"), handler)` because the middleware was read as the
+handler, and it rejected `c.json(task)` because the response status became a union. I
+moved `requireRole` to `app.use("/api/admin/users", requireRole("admin"))` and passed
+explicit statuses (`c.json(task, 200)`, `c.json({ ok: true }, 200)`). After that
+`deno check` passed.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
@@ -706,6 +722,24 @@ Sessions vs JWT: a session row can be deleted to revoke access immediately, but 
 request needs a database lookup. A JWT needs no lookup and works across several servers,
 but it cannot be revoked before it expires. The one-hour lifetime is the compromise.
 
+## Bonus 8: OpenAPI and a docs page
+
+The app is an `OpenAPIHono`. Every route has a `createRoute` definition with its method,
+path, request schema, response schemas and security, and the handlers are registered with
+`app.openapi(...)`. The same `Credentials`, `TaskBody` and `TaskQuery` Zod schemas used
+for validation also appear in the document.
+
+`GET /openapi.json` serves the OpenAPI document with the **Bearer** security scheme, so
+Swagger UI has an Authorize button. `GET /docs` serves a Swagger UI page that loads
+`/openapi.json`. The document includes the 400, 401, 403, 404 and 500 responses as well as
+the success responses.
+
+A `defaultHook` keeps the project's error shape for automatic validation failures:
+`{ "error": "validation failed", "issues": [...] }`. `tests/openapi_test.ts` checks that
+the document lists the routes (`/health`, `/auth/register`, `/auth/login`, `/api/tasks`,
+`/api/tasks/{id}`, `/api/tasks/{id}/restore`, `/api/me/summary`, `/api/admin/users`) and
+that `/docs` serves the Swagger UI HTML.
+
 ## Bonus 9: Roles (RBAC)
 
 `users.role` is `user` or `admin` (added by `drizzle/0004_breezy_moonstone.sql`). The role
@@ -844,6 +878,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 5: Seed data**
 - **Bonus 6: A connection pool (Postgres or SQLite)**
 - **Bonus 7: JWT instead of sessions**
+- **Bonus 8: OpenAPI and a docs page**
 - **Bonus 9: Roles (RBAC)**
 - **Bonus 10: Logging and request ids**
 - **Bonus 11: Health, readiness and configuration**
