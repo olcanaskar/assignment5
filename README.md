@@ -601,8 +601,9 @@ This command requires interactive input, but stdin is not a terminal.
 Set the DENO_DEPLOY_TOKEN environment variable or use --token.
 ```
 
-I prepared the Turso/libSQL token support and documented the deploy steps, but I cannot
-create a public URL without an account and token. That is why Bonus 19 is not claimed.
+I prepared the Turso/libSQL token support and documented both providers. Deno Deploy
+itself still stopped at the missing token error above; I used Render instead (see Bonus
+19).
 
 ### 15. Turso rejected `PRAGMA journal_mode=WAL`
 
@@ -617,6 +618,13 @@ WAL and `busy_timeout` are local SQLite settings; hosted libSQL manages concurre
 and rejects the pragma. I changed `createDbPool` to run both pragmas only when the URL
 starts with `file:`. The local pool tests still pass, and the remote pool no longer sends
 the statement.
+
+### 16. Render deployment succeeded after the Turso fix
+
+After the fix, Render rebuilt the Docker image. `/health` returned `{"ok":true}`, and I
+tested register, login, task creation and listing against
+`https://tasks-api-f30l.onrender.com`. `/openapi.json` and `/docs` also returned 200. The
+database lives in Turso; Render’s `/tmp` cache and uploads are ephemeral on the free plan.
 
 ## Bonus 1: Migrations with Drizzle Kit
 
@@ -1067,43 +1075,29 @@ green.
 
 ## Bonus 19: Deploy
 
-Deno Deploy is not accepting new accounts, so the same Docker image is prepared for
-**Render + Turso** (free) as the equivalent public deployment. `render.yaml` describes the
-service: Docker runtime, `/health` check, free plan, `APP_ENV=production`, a generated
-`JWT_SECRET`, and secrets for `DATABASE_URL` and `TURSO_AUTH_TOKEN`.
+Deno Deploy is not accepting new accounts, so I deployed the same Docker image on
+**Render** with a free **Turso** libSQL database.
 
-The app already supports this setup:
+**Public URL: <https://tasks-api-f30l.onrender.com>**
 
-- `DATABASE_URL` can be a `libsql://` URL; `TURSO_AUTH_TOKEN` is passed to `createDb` and
-  to every pool connection, so the database survives restarts.
-- `KV_PATH=/tmp/kv.sqlite` and `UPLOAD_DIR=/tmp/uploads` keep the KV cache and uploads
-  writable on the free instance. They are ephemeral on Render’s free plan; the database is
-  the important persistent part.
-- `Deno.cron` runs while the Render instance is awake. The free plan can sleep when idle,
-  so the daily purge is not guaranteed there; a paid always-on instance or Fly.io with a
-  volume is the alternative.
+- `/health` returns `{"ok":true}`.
+- Register, login, create task and list tasks were tested against the live service.
+- `/openapi.json` (12 paths) and `/docs` both return 200.
+- `render.yaml` uses the Docker runtime, Frankfurt, the free plan, `APP_ENV=production`, a
+  generated `JWT_SECRET`, and secrets for `DATABASE_URL` and `TURSO_AUTH_TOKEN`.
+- Turso is the persistent database. On Render’s free plan, `/tmp/kv.sqlite` and
+  `/tmp/uploads` are ephemeral; the database is the important persistent part.
+- `Deno.cron` runs while the free instance is awake; the free plan can sleep, so the daily
+  purge is not guaranteed there.
 
-To finish it:
+To redeploy: push to `main` (Blueprint autoDeploy), or open Render → Deploys → **Deploy
+latest commit**. The live service uses the Docker image and applies the Drizzle migrations
+at startup.
 
-1. Create a free Turso database named `tasks-api`; copy its `libsql://` URL and create a
-   token.
-2. In Render, choose **New → Blueprint**, connect this GitHub repo, and apply
-   `render.yaml`.
-3. Fill `DATABASE_URL` and `TURSO_AUTH_TOKEN`; Render generates `JWT_SECRET`.
-4. Wait for the health check, then open `https://<service>.onrender.com/health` and run
-   the register/login curl commands.
-
-**Fly.io alternative:** use the same Docker image with a 1 GB volume mounted at `/data`,
+**Fly.io alternative:** use the same image with a 1 GB volume at `/data`,
 `DATABASE_URL=file:/data/tasks.db`, `KV_PATH=/data/kv.sqlite`, `UPLOAD_DIR=/data/uploads`,
 and `JWT_SECRET` set with `fly secrets`. This keeps SQLite, uploads and KV on one volume,
 but Fly requires a credit card.
-
-There is no public URL yet, so Bonus 19 is **not claimed**. The local attempt stopped at:
-
-```text
-This command requires interactive input, but stdin is not a terminal.
-Set the DENO_DEPLOY_TOKEN environment variable or use --token.
-```
 
 ## Bonuses claimed
 
@@ -1125,5 +1119,6 @@ Set the DENO_DEPLOY_TOKEN environment variable or use --token.
 - **Bonus 16: A cache with Deno KV**
 - **Bonus 17: Docker**
 - **Bonus 18: Continuous integration**
+- **Bonus 19: Deploy**
 
 Each section above includes the proof asked for in the handout.
