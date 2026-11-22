@@ -2,13 +2,14 @@
 import type { MiddlewareHandler } from "hono";
 import { jwtVerify, SignJWT } from "jose";
 import bcrypt from "bcryptjs";
+import type { Db } from "./db.ts";
 
 export type Role = "user" | "admin";
 export type Session = { userId: number; role: Role };
 
 /** Values that middleware stores on the Hono context for the route handlers. */
 export type Env = {
-  Variables: { userId: number; role: Role; requestId: string };
+  Variables: { userId: number; role: Role; requestId: string; db: Db };
 };
 
 export const hashPassword = (plain: string) => bcrypt.hash(plain, 10);

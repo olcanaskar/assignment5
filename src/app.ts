@@ -12,6 +12,7 @@ import {
   signToken,
 } from "./auth.ts";
 import { createLoginLimiter } from "./rateLimit.ts";
+import type { Pool } from "./pool.ts";
 import { tasks, users } from "./schema.ts";
 import { summaryGrouped } from "./summary.ts";
 
@@ -48,12 +49,12 @@ const ownDeleted = (id: number, userId: number) =>
  * Build the whole application around a database, so tests can give it their own.
  * Passing a Deno.Kv instance enables the 60-second task cache (Bonus 16).
  */
-export function createApp(db: Db, kv?: Deno.Kv) {
+export function createApp(db: Db, kv?: Deno.Kv, pool?: Pool<Db>) {
   const app = new Hono<Env>();
   const loginLimiter = createLoginLimiter();
 
-  const loadTask = async (id: number, userId: number) => {
-    const [task] = await db.db
+  const loadTask = async (conn: Db, id: number, userId: number) => {
+    const [task] = await conn.db
       .select()
       .from(tasks)
       .where(ownVisible(id, userId));
@@ -152,6 +153,23 @@ export function createApp(db: Db, kv?: Deno.Kv) {
     return c.json({ token: await signToken(user.id, user.role) });
   });
 
+  // Every /api request borrows one pooled connection and returns it afterwards.
+  app.use("/api/*", async (c, next) => {
+    if (!pool) {
+      c.set("db", db);
+      await next();
+      return;
+    }
+
+    const conn = await pool.acquire();
+    c.set("db", conn);
+    try {
+      await next();
+    } finally {
+      pool.release(conn);
+    }
+  });
+
   // Everything below /api needs a valid JWT.
   app.use("/api/*", requireAuth);
 
@@ -162,11 +180,12 @@ export function createApp(db: Db, kv?: Deno.Kv) {
     }
 
     const { page, limit, status } = parsed.data;
+    const conn = c.get("db");
     const userId = c.get("userId");
     const visible = and(eq(tasks.userId, userId), isNull(tasks.deletedAt));
     const where = status ? and(visible, eq(tasks.status, status)) : visible;
 
-    const items = await db.db
+    const items = await conn.db
       .select()
       .from(tasks)
       .where(where)
@@ -174,7 +193,7 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       .limit(limit)
       .offset((page - 1) * limit);
 
-    const [row] = await db.db
+    const [row] = await conn.db
       .select({ total: count() })
       .from(tasks)
       .where(where);
@@ -183,11 +202,12 @@ export function createApp(db: Db, kv?: Deno.Kv) {
   });
 
   app.get("/api/me/summary", async (c) => {
-    return c.json(await summaryGrouped(db, c.get("userId")));
+    return c.json(await summaryGrouped(c.get("db"), c.get("userId")));
   });
 
   app.get("/api/admin/users", requireRole("admin"), async (c) => {
-    const items = await db.db
+    const conn = c.get("db");
+    const items = await conn.db
       .select({
         id: users.id,
         email: users.email,
@@ -204,7 +224,8 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       return c.json({ error: "validation failed", issues: parsed.error.issues }, 400);
     }
 
-    const [task] = await db.db
+    const conn = c.get("db");
+    const [task] = await conn.db
       .insert(tasks)
       .values({ userId: c.get("userId"), ...parsed.data })
       .returning();
@@ -219,19 +240,20 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       return c.json({ error: "not found" }, 404);
     }
 
+    const conn = c.get("db");
     const userId = c.get("userId");
     if (kv) {
       const key = taskKey(userId, id);
       const hit = await kv.get<Task>(key);
       if (hit.value !== null) return c.json(hit.value);
 
-      const task = await loadTask(id, userId);
+      const task = await loadTask(conn, id, userId);
       if (!task) return c.json({ error: "not found" }, 404);
       await kv.set(key, task, { expireIn: 60_000 });
       return c.json(task);
     }
 
-    const task = await loadTask(id, userId);
+    const task = await loadTask(conn, id, userId);
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
@@ -246,8 +268,9 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       return c.json({ error: "validation failed", issues: parsed.error.issues }, 400);
     }
 
+    const conn = c.get("db");
     const userId = c.get("userId");
-    const [task] = await db.db
+    const [task] = await conn.db
       .update(tasks)
       .set(parsed.data)
       .where(ownVisible(id, userId))
@@ -262,8 +285,9 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       return c.json({ error: "not found" }, 404);
     }
 
+    const conn = c.get("db");
     const userId = c.get("userId");
-    const [deleted] = await db.db
+    const [deleted] = await conn.db
       .update(tasks)
       .set({ deletedAt: sql`(strftime('%s','now'))` })
       .where(ownVisible(id, userId))
@@ -278,8 +302,9 @@ export function createApp(db: Db, kv?: Deno.Kv) {
       return c.json({ error: "not found" }, 404);
     }
 
+    const conn = c.get("db");
     const userId = c.get("userId");
-    const [task] = await db.db
+    const [task] = await conn.db
       .update(tasks)
       .set({ deletedAt: null })
       .where(ownDeleted(id, userId))
