@@ -33,7 +33,8 @@ deno lint
 ```
 
 To fill a fresh database with demo data, run `deno task seed`. The demo users are
-`demo1@example.com` and `demo2@example.com`, both with password `secret123`.
+`demo1@example.com` and `demo2@example.com`, both with password `secret123`;
+`demo2@example.com` is the admin.
 
 The given `dev` task starts `src/main.ts` with the defaults `file:./tasks.db` and
 port 8000. The `.env` file is not loaded automatically by that task; it is only read when
@@ -60,7 +61,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 41 tests. They cover:
+`deno task test` runs 46 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -81,8 +82,15 @@ Vite forwards `/auth` and `/api` to port 8000.
   second.
 - **Summary (2):** the status totals on the route, and the naive and grouped versions
   returning the same numbers.
-- **Migrations and index (1):** `deleted_at`, `due_date` and `idx_tasks_user_status` exist
-  after the migrations run.
+- **Migrations and index (1):** `deleted_at`, `due_date`, `role` and
+  `idx_tasks_user_status` exist after the migrations run, and the old `sessions` table is
+  gone.
+- **JWT (3):** a tampered token, an expired token and a token signed with another secret
+  all return 401.
+- **RBAC (1):** the admin route returns 401 without a token, 403 for a normal user and 200
+  for an admin.
+- **Cache (1):** the first GET reads the database, the second is a cache hit, an API
+  update invalidates the key, another user cannot hit the key, and DELETE removes it.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -91,11 +99,10 @@ data. `app.request(...)` calls the Hono app directly; no server or port is neede
 
 ### Tables
 
-| Table      | Columns                                                                                | Notes                                                                                                                                                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`    | `id`, `email`, `password_hash`, `created_at`                                           | `email` is unique; the password is stored only as a bcrypt hash.                                                                                                                                                       |
-| `sessions` | `token`, `user_id`, `expires_at`                                                       | `token` is a random UUID; a session lasts one hour.                                                                                                                                                                    |
-| `tasks`    | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `deleted_at` is null until a soft delete. |
+| Table   | Columns                                                                                | Notes                                                                                                                                                                                                                  |
+| ------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users` | `id`, `email`, `password_hash`, `role`, `created_at`                                   | `email` is unique; the password is stored only as a bcrypt hash; `role` is `user` or `admin`.                                                                                                                          |
+| `tasks` | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `deleted_at` is null until a soft delete. |
 
 `tasks.status` and `tasks.priority` are restricted twice: with the Drizzle
 `{ enum: [...] }` option for TypeScript, and with SQL `CHECK` constraints in the generated
@@ -113,6 +120,7 @@ the schema would run once at start-up and give every row the same timestamp.
 | `POST /auth/login`            | no     | 200 `{ token }`                          | 400 bad body, 401 wrong email or password |
 | `GET /api/tasks`              | yes    | 200 `{ items, page, limit, total }`      | 400 bad query, 401                        |
 | `GET /api/me/summary`         | yes    | 200 `{ todo, in-progress, done, total }` | 401                                       |
+| `GET /api/admin/users`        | admin  | 200 `{ items }`                          | 401, 403                                  |
 | `POST /api/tasks`             | yes    | 201 task                                 | 400, 401                                  |
 | `GET /api/tasks/:id`          | yes    | 200 task                                 | 401, 404                                  |
 | `PUT /api/tasks/:id`          | yes    | 200 updated task                         | 400, 401, 404                             |
@@ -127,8 +135,13 @@ the schema would run once at start-up and give every row the same timestamp.
   credentials are wrong, but not whether the email is registered.
 - **The password hash never leaves the database.** Register returns only `{ id, email }`,
   and login returns only `{ token }`.
-- **Sessions are rows in SQLite.** The token is a random UUID stored in `sessions` with an
-  expiry. Deleting the row would log the user out immediately; a JWT would be a bonus.
+- **JWTs replaced the sessions table.** Login signs a one-hour JWT with `sub` and `role`;
+  `requireAuth` verifies it without a database lookup. The tradeoff is that a token cannot
+  be revoked before it expires, unlike deleting a session row.
+- **Roles are in the token.** `GET /api/admin/users` uses `requireRole("admin")`; a normal
+  user gets 403, no token gets 401. The seed makes `demo2@example.com` the admin.
+- **The task cache is per user.** GET one task uses a Deno KV key `["task", userId, id]`
+  with a 60-second TTL; update, delete and restore delete the key.
 - **Zod validates the boundary.** `safeParse` produces the 400 body with `issues`; a bad
   token, an unknown route and a server error use `{ "error": "..." }`. `app.onError` logs
   the real error and returns only `internal error`.
@@ -199,7 +212,7 @@ curl -s -X POST $BASE/auth/register \
 curl -s -X POST $BASE/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"ada@example.com","password":"secret123"}'
-# {"token":"68e20042-..."}   (the token is shortened here)
+# {"token":"eyJhbGciOiJIUzI1NiJ9..."}   (the JWT is shortened here)
 ```
 
 Copy the token from the response and put it in a variable:
@@ -289,6 +302,22 @@ curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
 ```sh
 curl -s $BASE/api/me/summary -H "authorization: Bearer $TOKEN"
 # {"todo":2,"in-progress":0,"done":1,"total":3}
+```
+
+### Admin users (Bonus 9)
+
+After `deno task seed`, `demo2@example.com` is the admin. The normal demo user gets 403:
+
+```sh
+curl -s $BASE/api/admin/users -H "authorization: Bearer $DEMO1_TOKEN"
+# {"error":"forbidden"}
+```
+
+The admin gets the list without password hashes:
+
+```sh
+curl -s $BASE/api/admin/users -H "authorization: Bearer $DEMO2_TOKEN"
+# {"items":[{"id":1,"email":"demo1@example.com","role":"user","createdAt":1795356928},{"id":2,"email":"demo2@example.com","role":"admin","createdAt":1795356928}]}
 ```
 
 ### Get one task
@@ -483,6 +512,20 @@ CONSTRAINT "tasks_status_check" CHECK("tasks"."status" in ('todo', 'in-progress'
 CONSTRAINT "tasks_priority_check" CHECK("tasks"."priority" in ('low', 'medium', 'high'))
 ```
 
+### 9. `Deno.openKv` was undefined until I passed `--unstable-kv`
+
+The first time I checked the KV API I got:
+
+```text
+$ deno eval "console.log(typeof Deno.openKv)"
+undefined
+$ deno eval --unstable-kv "console.log(typeof Deno.openKv)"
+function
+```
+
+I added `--unstable-kv` to the `dev`, `start`, `start:prod`, `start:test`, `test` and
+`check` tasks. Without the flag the server would not start with the cache code.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
@@ -499,11 +542,13 @@ contains:
   constraints.
 - `0001_lyrical_tana_nile.sql` — `ALTER TABLE tasks ADD due_date integer;`
 - `0002_strange_la_nuit.sql` — `CREATE INDEX idx_tasks_user_status ...;` (Bonus 4).
+- `0003_oval_thunderbolt.sql` — `DROP TABLE sessions;` (Bonus 7).
+- `0004_breezy_moonstone.sql` — `ALTER TABLE users ADD role ... NOT NULL;` (Bonus 9).
 
 For the second change I added `dueDate` as a nullable integer to `src/schema.ts`, ran
 `deno task db:generate`, read the generated `ALTER TABLE`, and only then ran
-`deno task db:migrate`. `tests/migrations_test.ts` checks that the new column and the
-index exist after a fresh migration.
+`deno task db:migrate`. `tests/migrations_test.ts` checks that the new columns, the role
+column, the index and the removed sessions table are as expected after a fresh migration.
 
 ## Bonus 2: Soft delete, restore and a transaction
 
@@ -613,8 +658,49 @@ Refusing to seed a production database.
 exit: 1
 ```
 
-The demo login `demo1@example.com` / `secret123` returns ten tasks; `tests/seed_test.ts`
-checks the counts and the second run.
+The demo login `demo1@example.com` / `secret123` returns ten tasks; `demo2@example.com` is
+the admin. `tests/seed_test.ts` checks the counts, the admin role and the second run.
+
+## Bonus 7: JWT instead of sessions
+
+`src/auth.ts` uses `jose`. Login signs a one-hour HS256 token with `sub` and `role`;
+`requireAuth` verifies it and sets `userId` and `role` without a database lookup. The old
+`sessions` table is removed by `drizzle/0003_oval_thunderbolt.sql`.
+
+Real login output (shortened):
+
+```json
+{ "token": "eyJhbGciOiJIUzI1NiJ9..." }
+```
+
+The secret comes from `JWT_SECRET`; `src/config.ts` refuses the default `dev-secret` in
+production. `tests/jwt_test.ts` covers a tampered token, an expired token and a token
+signed with another secret; all three return 401.
+
+Sessions vs JWT: a session row can be deleted to revoke access immediately, but every
+request needs a database lookup. A JWT needs no lookup and works across several servers,
+but it cannot be revoked before it expires. The one-hour lifetime is the compromise.
+
+## Bonus 9: Roles (RBAC)
+
+`users.role` is `user` or `admin` (added by `drizzle/0004_breezy_moonstone.sql`). The role
+is put in the JWT at login, and `requireAuth` stores it in the context. `requireRole(...)`
+returns 401 when no role is present and 403 when the role is not allowed.
+
+`GET /api/admin/users` is admin-only and selects `id`, `email`, `role` and `createdAt`;
+`password_hash` is never selected. The seed makes `demo2@example.com` the admin and
+`demo1@example.com` a normal user.
+
+Real output:
+
+```text
+demo1 (role user):  403 {"error":"forbidden"}
+demo2 (role admin): 200 {"items":[{"id":1,"email":"demo1@example.com","role":"user","createdAt":1795356928},{"id":2,"email":"demo2@example.com","role":"admin","createdAt":1795356928}]}
+no token:           401 {"error":"unauthorized"}
+```
+
+`tests/rbac_test.ts` covers all three outcomes. 401 means "not authenticated"; 403 means
+"authenticated but not allowed".
 
 ## Bonus 10: Logging and request ids
 
@@ -705,6 +791,25 @@ This limiter is in memory: it does not protect a multi-process deployment, it re
 restart, and an attacker can still try many different email addresses because every email
 has its own bucket. A shared store such as Deno KV or Redis would be the next step.
 
+## Bonus 16: A cache with Deno KV
+
+`src/main.ts` opens one `Deno.Kv` and passes it to `createApp`. GET one task checks the
+key `["task", userId, id]`; on a miss it loads the row from SQLite and stores it with
+`expireIn: 60_000`. PUT, DELETE and restore delete the key, and the user id is part of the
+key so one user can never read another user's cached task.
+
+`tests/cache_test.ts` counts Drizzle `Query:` lines:
+
+- first GET: **1 query**
+- second GET: **0 queries** (cache hit)
+- after a direct database change: **0 queries**, so the cached row is served
+- after an API PUT: **1 query**, because the key was invalidated
+- after DELETE: **404**, not the stale cached row
+- another user: **404**, because the key includes the user id
+
+The cache entry expires after 60 seconds. `--unstable-kv` is required and is already in
+the `dev`, `start`, `test` and related tasks.
+
 ## Bonuses claimed
 
 - **Bonus 1: Migrations with Drizzle Kit**
@@ -712,8 +817,11 @@ has its own bucket. A shared store such as Deno KV or Redis would be the next st
 - **Bonus 3: Joins and the N+1 problem**
 - **Bonus 4: Indexes and EXPLAIN**
 - **Bonus 5: Seed data**
+- **Bonus 7: JWT instead of sessions**
+- **Bonus 9: Roles (RBAC)**
 - **Bonus 10: Logging and request ids**
 - **Bonus 11: Health, readiness and configuration**
 - **Bonus 15: Rate limit on login**
+- **Bonus 16: A cache with Deno KV**
 
 Each section above includes the proof asked for in the handout.
