@@ -1090,6 +1090,38 @@ Deno Deploy is not accepting new accounts, so I deployed the same Docker image o
 - `Deno.cron` runs while the free instance is awake; the free plan can sleep, so the daily
   purge is not guaranteed there.
 
+### Live curl
+
+```sh
+BASE=https://tasks-api-f30l.onrender.com
+
+curl -s $BASE/health
+# {"ok":true}
+
+curl -s -X POST $BASE/auth/register \
+  -H 'content-type: application/json' \
+  -d '{"email":"render181516@example.com","password":"secret123"}'
+# {"id":1,"email":"render181516@example.com"}
+
+curl -s -X POST $BASE/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"render181516@example.com","password":"secret123"}'
+# {"token":"eyJhbGciOiJIUzI1NiJ9..."}   (shortened)
+
+TOKEN='paste-the-token'
+
+curl -s -X POST $BASE/api/tasks \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"title":"Render smoke test"}'
+# {"id":2,"userId":1,"title":"Render smoke test","status":"todo","priority":"medium","createdAt":1795360517,"dueDate":null,"attachment":null,"completedAt":null,"deletedAt":null}
+
+curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
+# {"items":[{"id":2,...,"title":"Render smoke test",...},{"id":1,...,"title":"Welcome! Add your first task.",...}],"page":1,"limit":20,"total":2}
+```
+
+`/openapi.json` and `/docs` both answered 200 on the live service.
+
 To redeploy: push to `main` (Blueprint autoDeploy), or open Render → Deploys → **Deploy
 latest commit**. The live service uses the Docker image and applies the Drizzle migrations
 at startup.
