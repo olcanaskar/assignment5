@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: tasks-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: KV_PATH
+        value: /tmp/kv.sqlite
+      - key: UPLOAD_DIR
+        value: /tmp/uploads

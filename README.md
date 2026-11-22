@@ -1053,25 +1053,43 @@ green.
 
 ## Bonus 19: Deploy
 
-The code is prepared for Deno Deploy with a hosted libSQL database:
+Deno Deploy is not accepting new accounts, so the same Docker image is prepared for
+**Render + Turso** (free) as the equivalent public deployment. `render.yaml` describes the
+service: Docker runtime, `/health` check, free plan, `APP_ENV=production`, a generated
+`JWT_SECRET`, and secrets for `DATABASE_URL` and `TURSO_AUTH_TOKEN`.
+
+The app already supports this setup:
 
 - `DATABASE_URL` can be a `libsql://` URL; `TURSO_AUTH_TOKEN` is passed to `createDb` and
-  to every pool connection.
-- `KV_PATH` can point at a persistent KV location; on Deno Deploy, local uploads are not
-  persistent, so the file-upload bonus would need object storage there.
-- Steps: create a Turso database, set `DATABASE_URL`, `TURSO_AUTH_TOKEN`, `JWT_SECRET` and
-  `APP_ENV=production`, run `deno deploy create`, then `deno deploy --prod`, and check
-  `/health` on the public URL.
+  to every pool connection, so the database survives restarts.
+- `KV_PATH=/tmp/kv.sqlite` and `UPLOAD_DIR=/tmp/uploads` keep the KV cache and uploads
+  writable on the free instance. They are ephemeral on Render’s free plan; the database is
+  the important persistent part.
+- `Deno.cron` runs while the Render instance is awake. The free plan can sleep when idle,
+  so the daily purge is not guaranteed there; a paid always-on instance or Fly.io with a
+  volume is the alternative.
 
-I could not complete the deployment: this machine has no `DENO_DEPLOY_TOKEN` or Deno
-Deploy account, and `deno deploy whoami` answered:
+To finish it:
+
+1. Create a free Turso database named `tasks-api`; copy its `libsql://` URL and create a
+   token.
+2. In Render, choose **New → Blueprint**, connect this GitHub repo, and apply
+   `render.yaml`.
+3. Fill `DATABASE_URL` and `TURSO_AUTH_TOKEN`; Render generates `JWT_SECRET`.
+4. Wait for the health check, then open `https://<service>.onrender.com/health` and run
+   the register/login curl commands.
+
+**Fly.io alternative:** use the same Docker image with a 1 GB volume mounted at `/data`,
+`DATABASE_URL=file:/data/tasks.db`, `KV_PATH=/data/kv.sqlite`, `UPLOAD_DIR=/data/uploads`,
+and `JWT_SECRET` set with `fly secrets`. This keeps SQLite, uploads and KV on one volume,
+but Fly requires a credit card.
+
+There is no public URL yet, so Bonus 19 is **not claimed**. The local attempt stopped at:
 
 ```text
 This command requires interactive input, but stdin is not a terminal.
 Set the DENO_DEPLOY_TOKEN environment variable or use --token.
 ```
-
-There is no public URL yet, so Bonus 19 is **not claimed**.
 
 ## Bonuses claimed
 
