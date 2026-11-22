@@ -585,6 +585,25 @@ connected with `new WebSocket(...)`, created a task through `fetch`, and receive
 
 The test closes the socket and calls `server.shutdown()` in `finally`.
 
+### 13. Docker was not installed on my machine
+
+`docker --version` failed with `CommandNotFoundException`. Instead of claiming an untested
+image, I put the build and run in the GitHub Actions `docker` job; it built the image, ran
+the container with a volume, restarted it, and got the expected 409 for the duplicate
+email. The real log and image size are in Bonus 17.
+
+### 14. `deno deploy` needs a token in this non-interactive shell
+
+`deno deploy whoami` downloaded its CLI and then stopped with:
+
+```text
+This command requires interactive input, but stdin is not a terminal.
+Set the DENO_DEPLOY_TOKEN environment variable or use --token.
+```
+
+I prepared the Turso/libSQL token support and documented the deploy steps, but I cannot
+create a public URL without an account and token. That is why Bonus 19 is not claimed.
+
 ## Bonus 1: Migrations with Drizzle Kit
 
 `src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
@@ -979,6 +998,81 @@ key so one user can never read another user's cached task.
 The cache entry expires after 60 seconds. `--unstable-kv` is required and is already in
 the `dev`, `start`, `test` and related tasks.
 
+## Bonus 17: Docker
+
+The `Dockerfile` uses `denoland/deno:2.6.3`, copies `deno.json`/`deno.lock`, `src`,
+`drizzle` and `scripts`, and caches dependencies before copying the source, so a code
+change does not download them again. It creates `/data/uploads`, runs as the non-root
+`deno` user, and keeps `tasks.db`, `uploads/` and `kv.sqlite` on the `/data` volume:
+
+```sh
+docker build -t tasks-api .
+docker volume create tasksdata
+docker run -d --rm -p 8000:8000 -v tasksdata:/data tasks-api
+```
+
+The permission flags are: `--allow-net` for HTTP and WebSocket, `--allow-env` for the
+configuration, `--allow-read`/`--allow-write` for the database, migrations, uploads and
+KV, `--allow-ffi` for the native libSQL client, `--allow-sys` for system information, and
+`--unstable-kv`/`--unstable-cron` for the cache and cron APIs.
+
+Docker is not installed on the Windows machine, so the `docker` job in GitHub Actions
+performed the real build/run. The log shows:
+
+```text
+Register a user: {"id":1,"email":"docker@example.com"}
+After stop/start: {"ok":true}duplicate status: 409
+tasks-api:latest 426MB
+```
+
+The full job is
+[this Docker job](https://github.com/olcanaskar/assignment5/actions/runs/45034319297/job/137244553342).
+The image is 426 MB; a multi-stage build or `deno compile` with a slimmer base would make
+it smaller, while the dependency layer already avoids re-downloading packages.
+
+## Bonus 18: Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **test:** checkout, Deno 2 setup, `deno fmt --check`, `deno lint`, `deno task check`,
+  `deno task test`.
+- **docker:** build the image, run it with the `tasksdata` volume, wait for `/health`,
+  register a user, restart the container, verify the duplicate email is still 409, and
+  print the image size.
+
+Green run:
+[45034825913](https://github.com/olcanaskar/assignment5/actions/runs/45034825913)
+
+Red run: [45034842476](https://github.com/olcanaskar/assignment5/actions/runs/45034842476)
+— branch `ci-red-demo`, with an intentional `assertEquals(1, 2)` test.
+
+The branch was reverted in
+[45034933558](https://github.com/olcanaskar/assignment5/actions/runs/45034933558), so the
+fix is visible as a green run; the temporary branch was then deleted and `main` stayed
+green.
+
+## Bonus 19: Deploy
+
+The code is prepared for Deno Deploy with a hosted libSQL database:
+
+- `DATABASE_URL` can be a `libsql://` URL; `TURSO_AUTH_TOKEN` is passed to `createDb` and
+  to every pool connection.
+- `KV_PATH` can point at a persistent KV location; on Deno Deploy, local uploads are not
+  persistent, so the file-upload bonus would need object storage there.
+- Steps: create a Turso database, set `DATABASE_URL`, `TURSO_AUTH_TOKEN`, `JWT_SECRET` and
+  `APP_ENV=production`, run `deno deploy create`, then `deno deploy --prod`, and check
+  `/health` on the public URL.
+
+I could not complete the deployment: this machine has no `DENO_DEPLOY_TOKEN` or Deno
+Deploy account, and `deno deploy whoami` answered:
+
+```text
+This command requires interactive input, but stdin is not a terminal.
+Set the DENO_DEPLOY_TOKEN environment variable or use --token.
+```
+
+There is no public URL yet, so Bonus 19 is **not claimed**.
+
 ## Bonuses claimed
 
 - **Bonus 1: Migrations with Drizzle Kit**
@@ -997,5 +1091,7 @@ the `dev`, `start`, `test` and related tasks.
 - **Bonus 14: A background job with Deno.cron**
 - **Bonus 15: Rate limit on login**
 - **Bonus 16: A cache with Deno KV**
+- **Bonus 17: Docker**
+- **Bonus 18: Continuous integration**
 
 Each section above includes the proof asked for in the handout.
