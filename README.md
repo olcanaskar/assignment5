@@ -53,15 +53,21 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 20 tests. They cover:
+`deno task test` runs 32 tests. They cover:
 
-- **Auth:** register 201, duplicate email 409, bad body 400, login 200 with a token, wrong
-  password and unknown email both 401 with the same message, missing and unknown
+- **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
+  wrong password and unknown email both 401 with the same message, missing and unknown
   token 401.
-- **Tasks:** table defaults, no token 401, create and list, owner and default fields,
+- **Tasks (12):** table defaults, no token 401, create and list, owner and default fields,
   empty title 400, invalid status 400, another user's task 404 for read/update/delete,
   owner update and delete, pagination, bad query 400, status filter, unknown route 404.
-- **Health:** `GET /health` returns `{ "ok": true }`.
+- **Health and config (7):** `/health`, `/healthz`, a healthy `/readyz`, a failing
+  `/readyz` with 503, bad configuration, the production default secret, and a valid config
+  object.
+- **Logging (3):** `x-request-id` on every response, the same id in a 404 body, and the
+  same id in a 500 body.
+- **Rate limit (3):** five failures then 429, clearing on success, and the one-minute
+  window expiring.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -297,7 +303,7 @@ curl -s -X DELETE $BASE/api/tasks/2 -H "authorization: Bearer $TOKEN"
 
 ```sh
 curl -s $BASE/nope
-# {"error":"not found"}
+# {"error":"not found","requestId":"e3a8a73c-832f-4dbb-866a-a5cba7149235"}
 ```
 
 ## My own log
@@ -390,7 +396,99 @@ The task is `deno check src/*.ts tests/*.ts`. If I had put a route file in
 in `src/` and `tests/` so the given task covers every file. If the project grows, the
 check task should be extended.
 
+## Bonus 10: Logging and request ids
+
+Every request passes through one middleware in `src/app.ts`. It creates a UUID, sets the
+`x-request-id` response header, measures the request with `performance.now()`, and prints
+one JSON line after the route finishes:
+
+```json
+{"requestId":"804b7420-7512-4b07-8703-2181eeaf231f","method":"GET","path":"/healthz","status":200,"ms":1}
+{"requestId":"51668991-f33d-47ff-8247-d8fad48e3307","method":"POST","path":"/auth/login","status":401,"ms":77}
+{"requestId":"90004dac-46a0-4f13-8767-ede12f23ecac","method":"POST","path":"/auth/login","status":429,"ms":0}
+{"requestId":"e3a8a73c-832f-4dbb-866a-a5cba7149235","method":"GET","path":"/nope","status":404,"ms":0}
+```
+
+The line contains only the method, path, status, duration and id; it never includes the
+request body or the Authorization header. After a real run I checked the captured log:
+
+```powershell
+Get-Content $out | Select-String -Pattern 'secret123|password|Bearer|token'
+# no match
+```
+
+The 404 and 500 bodies repeat the same id:
+
+```sh
+curl -s -i $BASE/nope
+# x-request-id: e3a8a73c-832f-4dbb-866a-a5cba7149235
+# {"error":"not found","requestId":"e3a8a73c-832f-4dbb-866a-a5cba7149235"}
+```
+
+`tests/logging_test.ts` checks the header, the 404 body and the 500 body.
+
+## Bonus 11: Health, readiness and configuration
+
+- `GET /healthz` answers 200 `{ "ok": true }`.
+- `GET /readyz` runs `SELECT 1`; it answers 200 `{ "ready": true }` or 503
+  `{ "ready": false }`.
+- `src/config.ts` reads `PORT`, `DATABASE_URL`, `JWT_SECRET` and `APP_ENV` once, validates
+  them with Zod, and returns one `Config` object.
+- `src/main.ts` catches a bad configuration, prints the reason and exits with status 1.
+- In production the default `dev-secret` is refused.
+- `deno.json` has `start:prod` and `start:test` tasks for `.env.production` and
+  `.env.test`.
+
+Real run with `.env.production`:
+
+```text
+$ deno task start:prod
+$ curl -s localhost:8000/healthz
+{"ok":true}
+$ curl -s localhost:8000/readyz
+{"ready":true}
+```
+
+A bad configuration stops the process:
+
+```text
+$ deno run -A --env-file=bad.env src/main.ts
+Configuration error: invalid configuration: port: Invalid input: expected number, received NaN
+exit: 1
+```
+
+`tests/config_test.ts` covers a bad port and the production default secret;
+`tests/health_test.ts` covers healthz, a healthy readyz and a failing readyz (503).
+`start:test` was also run on port 8001, where `/healthz` and `/readyz` answered 200.
+
+## Bonus 15: Rate limit on login
+
+`src/rateLimit.ts` keeps a `Map` from email to `{ count, resetAt }`. The login route
+checks the bucket before it checks the password. Five failed logins in one minute block
+the sixth attempt for the rest of the window, even when the password is correct.
+
+Real run:
+
+```text
+attempts 1-5: 401 {"error":"invalid email or password"}
+attempt 6:    429
+HTTP/1.1 429 Too Many Requests
+retry-after: 60
+{"error":"too many login attempts"}
+```
+
+A successful login clears the bucket, and an expired window starts again from zero.
+`tests/rate_limit_test.ts` covers the five failures and 429, the clearing on success, and
+the one-minute expiry with a fake clock.
+
+This limiter is in memory: it does not protect a multi-process deployment, it resets on
+restart, and an attacker can still try many different email addresses because every email
+has its own bucket. A shared store such as Deno KV or Redis would be the next step.
+
 ## Bonuses claimed
 
-None yet. Each bonus I add will start with the exact line `Bonus N: Title` from the
-handout and will include the proof asked for in that bonus.
+- **Bonus 10: Logging and request ids**
+- **Bonus 11: Health, readiness and configuration**
+- **Bonus 15: Rate limit on login**
+
+Each section above includes the proof asked for in the handout.
