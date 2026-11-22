@@ -40,8 +40,12 @@ port 8000. The `.env` file is not loaded automatically by that task; it is only 
 you pass `--env-file=.env`. The project runs without a `.env`, which is useful for a fresh
 hand-in.
 
-If you change a table, delete the old `tasks.db` file first: `CREATE TABLE IF NOT EXISTS`
-does not alter an existing table.
+If you have an old `tasks.db` created before the migration switch, delete it once. The app
+now applies the files in `drizzle/` at startup and records them in `__drizzle_migrations`.
+
+For a schema change: edit `src/schema.ts`, run `deno task db:generate`, read the new file
+in `drizzle/`, then run `deno task db:migrate` (or just start the app, which applies
+pending migrations).
 
 ### Optional UI
 
@@ -56,7 +60,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 38 tests. They cover:
+`deno task test` runs 41 tests. They cover:
 
 - **Auth (7):** register 201, duplicate email 409, bad body 400, login 200 with a token,
   wrong password and unknown email both 401 with the same message, missing and unknown
@@ -75,6 +79,10 @@ Vite forwards `/auth` and `/api` to port 8000.
   restore, restoring a visible task 404, and a rolled-back registration.
 - **Seed (1):** two users and twenty tasks on the first run, nothing duplicated on the
   second.
+- **Summary (2):** the status totals on the route, and the naive and grouped versions
+  returning the same numbers.
+- **Migrations and index (1):** `deleted_at`, `due_date` and `idx_tasks_user_status` exist
+  after the migrations run.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
@@ -83,33 +91,33 @@ data. `app.request(...)` calls the Hono app directly; no server or port is neede
 
 ### Tables
 
-| Table      | Columns                                                                    | Notes                                                                                                                                                            |
-| ---------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`    | `id`, `email`, `password_hash`, `created_at`                               | `email` is unique; the password is stored only as a bcrypt hash.                                                                                                 |
-| `sessions` | `token`, `user_id`, `expires_at`                                           | `token` is a random UUID; a session lasts one hour.                                                                                                              |
-| `tasks`    | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `deleted_at` is null until a soft delete. |
+| Table      | Columns                                                                                | Notes                                                                                                                                                                                                                  |
+| ---------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`    | `id`, `email`, `password_hash`, `created_at`                                           | `email` is unique; the password is stored only as a bcrypt hash.                                                                                                                                                       |
+| `sessions` | `token`, `user_id`, `expires_at`                                                       | `token` is a random UUID; a session lasts one hour.                                                                                                                                                                    |
+| `tasks`    | `id`, `user_id`, `title`, `status`, `priority`, `created_at`, `due_date`, `deleted_at` | `user_id` references `users.id`; `status` is `todo`, `in-progress` or `done`; `priority` is `low`, `medium` or `high`; `due_date` is reserved for a future reminder feature; `deleted_at` is null until a soft delete. |
 
 `tasks.status` and `tasks.priority` are restricted twice: with the Drizzle
-`{ enum: [...] }` option for TypeScript, and with SQL `CHECK` constraints in `migrate()`
-for SQLite. The two definitions in `src/schema.ts` and `src/db.ts` describe the same
-table.
+`{ enum: [...] }` option for TypeScript, and with SQL `CHECK` constraints in the generated
+migration for SQLite. The Drizzle schema and the migration files describe the same table.
 
 `created_at` uses the SQL default `(strftime('%s','now'))`. A JavaScript `Date.now()` in
 the schema would run once at start-up and give every row the same timestamp.
 
 ### Routes
 
-| Method and path               | Token? | Success                             | Main failures                             |
-| ----------------------------- | ------ | ----------------------------------- | ----------------------------------------- |
-| `GET /health`                 | no     | 200 `{ "ok": true }`                | -                                         |
-| `POST /auth/register`         | no     | 201 `{ id, email }`                 | 400 bad body, 409 email taken             |
-| `POST /auth/login`            | no     | 200 `{ token }`                     | 400 bad body, 401 wrong email or password |
-| `GET /api/tasks`              | yes    | 200 `{ items, page, limit, total }` | 400 bad query, 401                        |
-| `POST /api/tasks`             | yes    | 201 task                            | 400, 401                                  |
-| `GET /api/tasks/:id`          | yes    | 200 task                            | 401, 404                                  |
-| `PUT /api/tasks/:id`          | yes    | 200 updated task                    | 400, 401, 404                             |
-| `DELETE /api/tasks/:id`       | yes    | 200 `{ "ok": true }`, soft delete   | 401, 404                                  |
-| `POST /api/tasks/:id/restore` | yes    | 200 restored task                   | 401, 404                                  |
+| Method and path               | Token? | Success                                  | Main failures                             |
+| ----------------------------- | ------ | ---------------------------------------- | ----------------------------------------- |
+| `GET /health`                 | no     | 200 `{ "ok": true }`                     | -                                         |
+| `POST /auth/register`         | no     | 201 `{ id, email }`                      | 400 bad body, 409 email taken             |
+| `POST /auth/login`            | no     | 200 `{ token }`                          | 400 bad body, 401 wrong email or password |
+| `GET /api/tasks`              | yes    | 200 `{ items, page, limit, total }`      | 400 bad query, 401                        |
+| `GET /api/me/summary`         | yes    | 200 `{ todo, in-progress, done, total }` | 401                                       |
+| `POST /api/tasks`             | yes    | 201 task                                 | 400, 401                                  |
+| `GET /api/tasks/:id`          | yes    | 200 task                                 | 401, 404                                  |
+| `PUT /api/tasks/:id`          | yes    | 200 updated task                         | 400, 401, 404                             |
+| `DELETE /api/tasks/:id`       | yes    | 200 `{ "ok": true }`, soft delete        | 401, 404                                  |
+| `POST /api/tasks/:id/restore` | yes    | 200 restored task                        | 401, 404                                  |
 
 ### Why these decisions
 
@@ -142,6 +150,12 @@ the schema would run once at start-up and give every row the same timestamp.
   string.
 - **Seed data is idempotent.** `deno task seed` inserts two demo users and ten tasks each;
   on a second run it finds the users and their tasks and adds nothing.
+- **The summary uses one query.** The route calls `summaryGrouped`, which is one
+  `GROUP BY status` query. `summaryNaive` is kept for the comparison: it loads the rows
+  and then runs one count query per status, four queries in total.
+- **The list index matches the list query.** `idx_tasks_user_status` covers
+  `(user_id, status)`, the two columns used by the filtered list and the summary. The
+  benchmark in `scripts/explain.ts` shows the plan change.
 
 ## API with curl
 
@@ -215,7 +229,7 @@ already has one item:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795355504,"deletedAt":null}],"page":1,"limit":20,"total":1}
+# {"items":[{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":1}
 ```
 
 Without a token:
@@ -232,7 +246,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795355505,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 ```sh
@@ -240,7 +254,7 @@ curl -s -X POST $BASE/api/tasks \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Run the test suite"}'
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795355505,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 An empty title is a 400:
@@ -267,14 +281,21 @@ curl -s -X POST $BASE/api/tasks \
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795355505,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795355505,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795355504,"deletedAt":null}],"page":1,"limit":20,"total":3}
+# {"items":[{"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":3}
+```
+
+### Summary per status (Bonus 3)
+
+```sh
+curl -s $BASE/api/me/summary -H "authorization: Bearer $TOKEN"
+# {"todo":2,"in-progress":0,"done":1,"total":3}
 ```
 
 ### Get one task
 
 ```sh
 curl -s $BASE/api/tasks/2 -H "authorization: Bearer $TOKEN"
-# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795355505,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"todo","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 A task that belongs to another user answers 404. After registering `bob@example.com` and
@@ -294,7 +315,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
   -H 'content-type: application/json' \
   -H "authorization: Bearer $TOKEN" \
   -d '{"title":"Write the README","status":"done","priority":"high"}'
-# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795355505,"deletedAt":null}
+# {"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 ### Pagination and filtering
@@ -302,7 +323,7 @@ curl -s -X PUT $BASE/api/tasks/2 \
 ```sh
 curl -s "$BASE/api/tasks?page=1&limit=1&status=done" \
   -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795355505,"deletedAt":null}],"page":1,"limit":1,"total":1}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":1,"total":1}
 ```
 
 A bad limit is a 400, not a crash:
@@ -331,12 +352,12 @@ The list now has the other two tasks:
 
 ```sh
 curl -s $BASE/api/tasks -H "authorization: Bearer $TOKEN"
-# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795355505,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795355504,"deletedAt":null}],"page":1,"limit":20,"total":2}
+# {"items":[{"id":2,"userId":1,"title":"Write the README","status":"done","priority":"high","createdAt":1795356216,"dueDate":null,"deletedAt":null},{"id":1,"userId":1,"title":"Welcome! Add your first task.","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}],"page":1,"limit":20,"total":2}
 ```
 
 ```sh
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795355505,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 Restoring a task that is not deleted is a 404:
@@ -450,6 +471,40 @@ saw three. I changed `registerAndLogin()` in `tests/helpers.ts` to soft-delete t
 task before returning the token, and added `tests/bonus2_test.ts` to check the welcome
 task and the rollback explicitly. The helper now also exercises DELETE on every setup.
 
+### 8. Drizzle Kit did not generate the CHECK constraints from `{ enum }`
+
+My first generated migration had no SQL `CHECK` on `status` or `priority`; the
+`{ enum: [...] }` option only restricts TypeScript. I added `check()` definitions to
+`src/schema.ts`, deleted the `drizzle/` folder and regenerated `0000`. The new SQL
+contains:
+
+```sql
+CONSTRAINT "tasks_status_check" CHECK("tasks"."status" in ('todo', 'in-progress', 'done')),
+CONSTRAINT "tasks_priority_check" CHECK("tasks"."priority" in ('low', 'medium', 'high'))
+```
+
+## Bonus 1: Migrations with Drizzle Kit
+
+`src/db.ts` no longer contains hand-written `CREATE TABLE` SQL. `migrate()` calls the
+Drizzle migrator with the `drizzle/` folder:
+
+```ts
+await runMigrations(db, { migrationsFolder: "./drizzle" });
+```
+
+`drizzle.config.ts` points at `src/schema.ts` and writes to `drizzle/`. The folder
+contains:
+
+- `0000_sharp_maverick.sql` — users, sessions and tasks, including the SQL CHECK
+  constraints.
+- `0001_lyrical_tana_nile.sql` — `ALTER TABLE tasks ADD due_date integer;`
+- `0002_strange_la_nuit.sql` — `CREATE INDEX idx_tasks_user_status ...;` (Bonus 4).
+
+For the second change I added `dueDate` as a nullable integer to `src/schema.ts`, ran
+`deno task db:generate`, read the generated `ALTER TABLE`, and only then ran
+`deno task db:migrate`. `tests/migrations_test.ts` checks that the new column and the
+index exist after a fresh migration.
+
 ## Bonus 2: Soft delete, restore and a transaction
 
 - `tasks` has a nullable `deleted_at` column.
@@ -470,11 +525,66 @@ curl -s -X DELETE $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 curl -s $BASE/api/tasks/3 -H "authorization: Bearer $TOKEN"
 # {"error":"not found"}
 curl -s -X POST $BASE/api/tasks/3/restore -H "authorization: Bearer $TOKEN"
-# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795355505,"deletedAt":null}
+# {"id":3,"userId":1,"title":"Run the test suite","status":"todo","priority":"medium","createdAt":1795356216,"dueDate":null,"deletedAt":null}
 ```
 
 `tests/bonus2_test.ts` covers the welcome task, delete hiding, restore, restore-visible
 404 and the rolled-back registration.
+
+## Bonus 3: Joins and the N+1 problem
+
+`GET /api/me/summary` returns `{ todo, in-progress, done, total }`.
+
+The naive version `summaryNaive()` loads the task ids and then runs one count query per
+status: **4 queries**. The grouped version `summaryGrouped()` runs one `GROUP BY status`
+query: **1 query**. `deno task db:summary-count` prints the actual queries:
+
+```text
+naive: 4 queries
+Query: select "id" from "tasks" where ("tasks"."user_id" = ? and "tasks"."deleted_at" is null) -- params: [1]
+Query: select count(*) from "tasks" where (("tasks"."user_id" = ? and "tasks"."deleted_at" is null) and "tasks"."status" = ?) -- params: [1, "todo"]
+Query: select count(*) from "tasks" where (("tasks"."user_id" = ? and "tasks"."deleted_at" is null) and "tasks"."status" = ?) -- params: [1, "in-progress"]
+Query: select count(*) from "tasks" where (("tasks"."user_id" = ? and "tasks"."deleted_at" is null) and "tasks"."status" = ?) -- params: [1, "done"]
+
+grouped: 1 query
+Query: select "status", count(*) from "tasks" where ("tasks"."user_id" = ? and "tasks"."deleted_at" is null) group by "tasks"."status" -- params: [1]
+```
+
+The naive query count grows with the number of groups (and would grow per user or tag if
+the summary were extended); the grouped query stays one query regardless of the number of
+rows. The route uses the grouped version. `tests/summary_test.ts` checks that both
+versions return the same numbers, that the route counts only visible tasks, and that a
+soft delete changes the total.
+
+## Bonus 4: Indexes and EXPLAIN
+
+`idx_tasks_user_status` is declared in `src/schema.ts` and created by
+`drizzle/0002_strange_la_nuit.sql`.
+
+`deno task db:explain` fills a temporary database with 20 users and 20,000 tasks, drops
+the index, runs `EXPLAIN QUERY PLAN` and times the query, then creates the index and
+repeats. Real output:
+
+```json
+{
+  "seededUsers": 20,
+  "seededTasks": 20000,
+  "before": {
+    "plan": ["SCAN tasks"],
+    "averageMs": 5.35
+  },
+  "after": {
+    "plan": ["SEARCH tasks USING INDEX idx_tasks_user_status (user_id=? AND status=?)"],
+    "averageMs": 3.69
+  }
+}
+```
+
+The plan changes from a full table scan to an index search, and the average of 30 runs
+drops from 5.35 ms to 3.69 ms. The index costs extra storage and makes inserts and updates
+slightly slower, so it is worth it here because the list and summary both filter on
+`(user_id, status)`. `tests/migrations_test.ts` also checks that the index exists after
+the migrations run.
 
 ## Bonus 5: Seed data
 
@@ -597,7 +707,10 @@ has its own bucket. A shared store such as Deno KV or Redis would be the next st
 
 ## Bonuses claimed
 
+- **Bonus 1: Migrations with Drizzle Kit**
 - **Bonus 2: Soft delete, restore and a transaction**
+- **Bonus 3: Joins and the N+1 problem**
+- **Bonus 4: Indexes and EXPLAIN**
 - **Bonus 5: Seed data**
 - **Bonus 10: Logging and request ids**
 - **Bonus 11: Health, readiness and configuration**
