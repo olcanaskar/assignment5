@@ -51,6 +51,12 @@ To fill a fresh database with demo data, run `deno task seed`. The demo users ar
 `demo1@example.com` and `demo2@example.com`, both with password `secret123`;
 `demo2@example.com` is the admin.
 
+To smoke-test the live deployment (health, register, login, create, list):
+
+```sh
+deno task smoke:remote https://tasks-api-f30l.onrender.com
+```
+
 The given `dev` task starts `src/main.ts` with the defaults `file:./tasks.db` and
 port 8000. The `.env` file is not loaded automatically by that task; it is only read when
 you pass `--env-file=.env`. The project runs without a `.env`, which is useful for a fresh

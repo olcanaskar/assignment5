@@ -10,6 +10,7 @@
     "db:migrate": "deno run -A npm:drizzle-kit migrate",
     "db:summary-count": "deno run -A scripts/summary-count.ts",
     "db:explain": "deno run -A scripts/explain.ts",
+    "smoke:remote": "deno run -A scripts/smoke-remote.ts",
     "check": "deno check --unstable-kv --unstable-cron src/*.ts tests/*.ts scripts/*.ts drizzle.config.ts",
     "fmt": "deno fmt",
     "lint": "deno lint",
