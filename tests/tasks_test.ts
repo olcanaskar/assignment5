@@ -243,6 +243,64 @@ Deno.test("R6: pagination returns the requested page and the total", async () =>
   assertEquals(body.items[0]?.title, "One");
 });
 
+Deno.test("R6: limit 100 is allowed and limit 101 is rejected", async () => {
+  const app = await freshApp();
+  const token = await registerAndLogin(app, "limit-boundary@example.com");
+  const headers = { authorization: `Bearer ${token}` };
+  await createTask(app, token, { title: "One" });
+
+  const allowed = await app.request("/api/tasks?limit=100", { headers });
+  assertEquals(allowed.status, 200);
+  const allowedBody = await allowed.json() as { limit: number; items: unknown[] };
+  assertEquals(allowedBody.limit, 100);
+  assertEquals(allowedBody.items.length, 1);
+
+  const rejected = await app.request("/api/tasks?limit=101", { headers });
+  assertEquals(rejected.status, 400);
+  const rejectedBody = await rejected.json() as { error: string };
+  assertEquals(rejectedBody.error, "validation failed");
+});
+
+Deno.test("R6: a page past the end is empty but total remains", async () => {
+  const app = await freshApp();
+  const token = await registerAndLogin(app, "page-end@example.com");
+  const headers = { authorization: `Bearer ${token}` };
+
+  for (const title of ["One", "Two", "Three"]) {
+    assertEquals((await createTask(app, token, { title })).status, 201);
+  }
+
+  const res = await app.request("/api/tasks?page=99&limit=20", { headers });
+  assertEquals(res.status, 200);
+  const body = await res.json() as { items: unknown[]; total: number };
+  assertEquals(body.items.length, 0);
+  assertEquals(body.total, 3);
+});
+
+Deno.test("R6: an invalid status query is 400", async () => {
+  const app = await freshApp();
+  const token = await registerAndLogin(app, "bad-status-query@example.com");
+
+  const res = await app.request("/api/tasks?status=urgent", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assertEquals(res.status, 400);
+  const body = await res.json() as { error: string };
+  assertEquals(body.error, "validation failed");
+});
+
+Deno.test("R4: a non-numeric task id is 404 for an authenticated user", async () => {
+  const app = await freshApp();
+  const token = await registerAndLogin(app, "bad-id@example.com");
+
+  const res = await app.request("/api/tasks/abc", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assertEquals(res.status, 404);
+  const body = await res.json() as { error: string };
+  assertEquals(body.error, "not found");
+});
+
 Deno.test("R6: a bad page or limit is 400", async () => {
   const app = await freshApp();
   const token = await registerAndLogin(app, "bad-query@example.com");
