@@ -90,6 +90,17 @@ Deno.test("R3: an unknown bearer token is 401", async () => {
   assertEquals(await res.json(), { error: "unauthorized" });
 });
 
+Deno.test("R3: concurrent duplicate registration returns 201 and 409", async () => {
+  const app = await freshApp();
+  const [first, second] = await Promise.all([
+    register(app, "race@example.com"),
+    register(app, "race@example.com"),
+  ]);
+
+  const statuses = [first.status, second.status].sort((a, b) => a - b);
+  assertEquals(statuses, [201, 409]);
+});
+
 Deno.test("R5: malformed JSON is a 400 with the error shape", async () => {
   const app = await freshApp();
   const res = await app.request("/auth/register", {

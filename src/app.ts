@@ -313,6 +313,17 @@ const SWAGGER_HTML = `<!doctype html>
 </body>
 </html>`;
 
+function isDuplicateEmailError(error: unknown): boolean {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if (/unique constraint failed: users\.email/i.test(current.message)) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
 /** A visible task belongs to the user and has not been soft-deleted. */
 const ownVisible = (id: number, userId: number) =>
   and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt));
@@ -402,21 +413,30 @@ export function createApp(
     if (existing) return c.json({ error: "email already taken" }, 409);
 
     const passwordHash = await hashPassword(password);
-    const user = await db.db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(users)
-        .values({ email, passwordHash })
-        .returning({ id: users.id, email: users.email });
-      if (!created) throw new Error("could not create user");
+    try {
+      const user = await db.db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(users)
+          .values({ email, passwordHash })
+          .returning({ id: users.id, email: users.email });
+        if (!created) throw new Error("could not create user");
 
-      await tx.insert(tasks).values({
-        userId: created.id,
-        title: "Welcome! Add your first task.",
+        await tx.insert(tasks).values({
+          userId: created.id,
+          title: "Welcome! Add your first task.",
+        });
+        return created;
       });
-      return created;
-    });
 
-    return c.json(user, 201);
+      return c.json(user, 201);
+    } catch (error) {
+      // Two simultaneous registrations can pass the SELECT check together.
+      // The unique index still protects us; translate that constraint error.
+      if (isDuplicateEmailError(error)) {
+        return c.json({ error: "email already taken" }, 409);
+      }
+      throw error;
+    }
   });
 
   app.openapi(loginRoute, async (c) => {
