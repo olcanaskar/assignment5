@@ -111,7 +111,7 @@ Deno.test("Bonus 13: another user's socket receives nothing", async () => {
   try {
     const base = `http://localhost:${server.addr.port}`;
 
-    async function tokenFor(email: string): Promise<string> {
+    const tokenFor = async (email: string): Promise<string> => {
       const credentials = { email, password: "secret123" };
       await fetch(`${base}/auth/register`, {
         method: "POST",
@@ -124,7 +124,7 @@ Deno.test("Bonus 13: another user's socket receives nothing", async () => {
         body: JSON.stringify(credentials),
       });
       return (await loggedIn.json() as { token: string }).token;
-    }
+    };
 
     const tokenA = await tokenFor("ws-user-a@example.com");
     const tokenB = await tokenFor("ws-user-b@example.com");
