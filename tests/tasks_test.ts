@@ -182,6 +182,41 @@ Deno.test("R4: the owner can update and delete a task", async () => {
   assertEquals(gone.status, 404);
 });
 
+Deno.test("Bonus 14: completedAt follows status transitions", async () => {
+  const app = await freshApp();
+  const token = await registerAndLogin(app, "completed@example.com");
+  const headers = {
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+  };
+
+  const created = await createTask(app, token, {
+    title: "Completed task",
+    status: "done",
+  });
+  const createdTask = await created.json() as {
+    id: number;
+    completedAt: number | null;
+  };
+  assertEquals(typeof createdTask.completedAt, "number");
+
+  const toTodo = await app.request(`/api/tasks/${createdTask.id}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ title: "Completed task", status: "todo" }),
+  });
+  const todoTask = await toTodo.json() as { completedAt: number | null };
+  assertEquals(todoTask.completedAt, null);
+
+  const toDone = await app.request(`/api/tasks/${createdTask.id}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ title: "Completed task", status: "done" }),
+  });
+  const doneTask = await toDone.json() as { completedAt: number | null };
+  assertEquals(typeof doneTask.completedAt, "number");
+});
+
 Deno.test("R6: pagination returns the requested page and the total", async () => {
   const app = await freshApp();
   const token = await registerAndLogin(app, "pages@example.com");
