@@ -7,6 +7,19 @@ in, and can then create, list, update and delete only their own tasks. Every req
 and query string is checked with Zod, every failure has the same JSON shape, and the test
 suite runs without starting a server.
 
+## Repository
+
+The project is kept in a private Git repository:
+<https://github.com/olcanaskar/assignment5>
+
+It will be made public before submission. To check a clean copy:
+
+```sh
+git clone https://github.com/olcanaskar/assignment5.git
+cd assignment5
+deno task test
+```
+
 ## Run it
 
 ### Windows PowerShell
@@ -63,14 +76,15 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 56 tests. They cover:
+`deno task test` runs 64 tests. They cover:
 
-- **Auth (8):** register 201, duplicate email 409, bad body 400, malformed JSON 400, login
-  200 with a token, wrong password and unknown email both 401 with the same message,
-  missing and unknown token 401.
-- **Tasks (12):** table defaults, no token 401, create and list, owner and default fields,
+- **Auth (9):** register 201, duplicate email 409, concurrent duplicate 201/409, bad body
+  400, malformed JSON 400, login 200 with a token, wrong password and unknown email both
+  401 with the same message, missing and unknown token 401.
+- **Tasks (17):** table defaults, no token 401, create and list, owner and default fields,
   empty title 400, invalid status 400, another user's task 404 for read/update/delete,
-  owner update and delete, pagination, bad query 400, status filter, unknown route 404.
+  owner update and delete, completedAt transitions, pagination, limit/page/status/id
+  boundaries, bad query 400, status filter, unknown route 404.
 - **Health and config (7):** `/health`, `/healthz`, a healthy `/readyz`, a failing
   `/readyz` with 503, bad configuration, the production default secret, and a valid config
   object.
@@ -99,8 +113,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   serves the Swagger UI page.
 - **Upload (2):** a PNG upload and download, owner-only access, and the 400/413/415 file
   validation failures.
-- **WebSocket (2):** a bad token gets 401, and a real WebSocket receives the created task
-  for that user.
+- **WebSocket (4):** a bad token gets 401; a real WebSocket receives created, updated and
+  deleted messages; another user's socket receives nothing.
 - **Purge (1):** only old done tasks with a completion date are removed, and a second run
   removes nothing.
 
