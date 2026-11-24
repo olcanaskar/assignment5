@@ -497,30 +497,25 @@ curl -s $BASE/nope
 
 ## My own log
 
-### 1. The starter failed `deno lint` on Deno 2.9.7
+These are five real problems I hit. I kept each one short: what I tried, the error I saw,
+and what fixed it.
+
+### 1. The starter did not pass `deno lint`
 
 The starter was tested with Deno 2.6.3. On Deno 2.9.7, `deno task test`, `deno task check`
-and `deno fmt --check` passed, but `deno lint` failed with six errors:
+and `deno fmt --check` passed, but `deno lint` failed six times with:
 
 ```text
 error[jsx-button-has-type]: `button` elements must have a `type` attribute
    --> C:\Projects\assignment5\ui\src\App.tsx:126:14
 ```
 
-The root `deno lint` also scans `ui/`, which is not graded. I added `type="button"` to the
-six buttons in `ui/src/App.tsx`; `deno lint` is clean now.
+The root lint also checks the given `ui/` folder. I added `type="button"` to the six
+buttons. `deno lint` is clean now.
 
-### 2. PowerShell turned my JSON body into invalid JSON
+### 2. PowerShell changed my JSON
 
-I first tested the API with `curl.exe` from PowerShell and passed the JSON body as a
-variable:
-
-```powershell
-curl.exe -s -X POST http://localhost:8000/auth/register `
-  -H "content-type: application/json" -d $body
-```
-
-The server answered:
+In PowerShell I sent the body with `curl.exe -d $body`. The server answered:
 
 ```json
 {
@@ -542,29 +537,33 @@ The server answered:
 }
 ```
 
-The body was valid in PowerShell, but the native argument quoting removed the double
-quotes before curl sent it. `c.req.json()` failed, my `.catch(() => ({}))` turned the
-failure into an empty object, and Zod reported the missing fields. I used
-`Invoke-RestMethod` for the smoke test and `curl.exe --data-binary "@file.json"` for the
-curl outputs above.
+PowerShell's native quoting removed the JSON quotes. I used `Invoke-RestMethod` for the
+smoke test and `curl.exe --data-binary "@file.json"` for the real curl outputs.
 
-### 3. PUT reset a high priority to medium
+### 3. Turso rejected a SQLite PRAGMA
 
-I created a task with `"priority":"high"` and then sent a PUT with only `title` and
-`status`. The response came back with `"priority":"medium"`. The reason is that `PUT` uses
-the same `TaskBody` schema as `POST`, whose defaults are `todo` and `medium`, and `PUT`
-replaces the whole task. I kept the full-replacement behaviour because that is what `PUT`
-means in the handout, and changed the given UI's advance action to send the current
-priority too. A partial update would need a separate PATCH schema with optional fields.
+My first Render deploy failed with:
 
-### 4. Two tasks created in the same second had the same `createdAt`
+```text
+LibsqlError: SQL_PARSE_ERROR: SQL not allowed statement: PRAGMA journal_mode=WAL
+```
 
-I created two tasks quickly and both had `"createdAt":1795343577`. The SQL default uses
-seconds, so ordering by `created_at` alone was not deterministic. I changed the list query
-to `ORDER BY created_at DESC, id DESC`; the id is the tiebreaker, so page 1 and page 2
-cannot show the same item or skip an item.
+`journal_mode=WAL` is a local SQLite setting; hosted libSQL rejects it. `createDbPool` now
+runs `journal_mode` and `busy_timeout` only for `file:` URLs. The next deploy worked.
 
-### 5. `deno task dev` did not read `.env`
+### 4. Bad JSON returned 500
+
+I sent `{not-json` to `/auth/register`. The validator threw an `HTTPException` with status
+400, but `app.onError` caught every error as 500:
+
+```json
+{ "error": "internal error", "requestId": "..." }
+```
+
+I added an `HTTPException` branch that keeps its status and message. The same request now
+returns 400 with the request id.
+
+### 5. `.env` was not loaded
 
 I changed `PORT` in `.env` and ran a small script with and without the flag:
 
@@ -573,136 +572,9 @@ without flag: undefined
 with flag: 8123
 ```
 
-The given `dev` task is `deno run -A --watch src/main.ts`, with no `--env-file`. The
-server still works because `src/main.ts` has defaults (`file:./tasks.db`, port 8000). I
-left the task unchanged so the project runs from a fresh zip without a `.env`; the README
-explains how to pass `--env-file=.env` when the file is wanted.
-
-### 6. `deno task check` only checked the top level
-
-The task checked only `src/*.ts` and `tests/*.ts`. When I added `scripts/seed.ts`, it
-would not have been type-checked, so I extended the task to
-`deno check src/*.ts tests/*.ts scripts/*.ts`. A new subfolder such as `src/routes/` would
-still be missed; I kept the source files flat.
-
-### 7. The welcome task broke my task-count tests
-
-After Bonus 2, every registration created one extra task, so tests that expected two tasks
-saw three. I changed `registerAndLogin()` in `tests/helpers.ts` to soft-delete the welcome
-task before returning the token, and added `tests/bonus2_test.ts` to check the welcome
-task and the rollback explicitly. The helper now also exercises DELETE on every setup.
-
-### 8. Drizzle Kit did not generate the CHECK constraints from `{ enum }`
-
-My first generated migration had no SQL `CHECK` on `status` or `priority`; the
-`{ enum: [...] }` option only restricts TypeScript. I added `check()` definitions to
-`src/schema.ts`, deleted the `drizzle/` folder and regenerated `0000`. The new SQL
-contains:
-
-```sql
-CONSTRAINT "tasks_status_check" CHECK("tasks"."status" in ('todo', 'in-progress', 'done')),
-CONSTRAINT "tasks_priority_check" CHECK("tasks"."priority" in ('low', 'medium', 'high'))
-```
-
-### 9. `Deno.openKv` was undefined until I passed `--unstable-kv`
-
-The first time I checked the KV API I got:
-
-```text
-$ deno eval "console.log(typeof Deno.openKv)"
-undefined
-$ deno eval --unstable-kv "console.log(typeof Deno.openKv)"
-function
-```
-
-I added `--unstable-kv` to the `dev`, `start`, `start:prod`, `start:test`, `test` and
-`check` tasks. Without the flag the server would not start with the cache code.
-
-### 10. OpenAPIHono rejected my union responses
-
-When I converted `app.ts`, TypeScript rejected
-`app.openapi(route, requireRole("admin"), handler)` because the middleware was read as the
-handler, and it rejected `c.json(task)` because the response status became a union. I
-moved `requireRole` to `app.use("/api/admin/users", requireRole("admin"))` and passed
-explicit statuses (`c.json(task, 200)`, `c.json({ ok: true }, 200)`). After that
-`deno check` passed.
-
-### 11. `c.req.parseBody()` needed a concrete record type
-
-The upload handler did `const body = await c.req.parseBody().catch(() => ({}))` and
-TypeScript rejected `body["file"]`:
-
-```text
-Element implicitly has an 'any' type because expression of type '"file"' can't be used to index type '{ [x: string]: string | File; } | {}'.
-```
-
-I changed it to `const body: Record<string, string | File> = ...`. The empty fallback is
-still a valid record, and the `file instanceof File` check handles the rest.
-
-### 12. The WebSocket test needed a real server
-
-`app.request()` can test that a bad token gets 401, but it cannot upgrade a real socket. I
-started `Deno.serve({ port: 0 }, app.fetch)` inside the test, read `server.addr.port`,
-connected with `new WebSocket(...)`, created a task through `fetch`, and received:
-
-```json
-{"type":"created","task":{"id":2,"title":"Live task",...}}
-```
-
-The test closes the socket and calls `server.shutdown()` in `finally`.
-
-### 13. Docker was not installed on my machine
-
-`docker --version` failed with `CommandNotFoundException`. Instead of claiming an untested
-image, I put the build and run in the GitHub Actions `docker` job; it built the image, ran
-the container with a volume, restarted it, and got the expected 409 for the duplicate
-email. The real log and image size are in Bonus 17.
-
-### 14. `deno deploy` needs a token in this non-interactive shell
-
-`deno deploy whoami` downloaded its CLI and then stopped with:
-
-```text
-This command requires interactive input, but stdin is not a terminal.
-Set the DENO_DEPLOY_TOKEN environment variable or use --token.
-```
-
-I prepared the Turso/libSQL token support and documented both providers. Deno Deploy
-itself still stopped at the missing token error above; I used Render instead (see Bonus
-19).
-
-### 15. Turso rejected `PRAGMA journal_mode=WAL`
-
-The first Render deploy exited with status 1:
-
-```text
-LibsqlError: SQL_PARSE_ERROR: SQL not allowed statement: PRAGMA journal_mode=WAL
-    at async createDbPool (file:///app/src/dbPool.ts:21:5)
-```
-
-WAL and `busy_timeout` are local SQLite settings; hosted libSQL manages concurrency itself
-and rejects the pragma. I changed `createDbPool` to run both pragmas only when the URL
-starts with `file:`. The local pool tests still pass, and the remote pool no longer sends
-the statement.
-
-### 16. Render deployment succeeded after the Turso fix
-
-After the fix, Render rebuilt the Docker image. `/health` returned `{"ok":true}`, and I
-tested register, login, task creation and listing against
-`https://tasks-api-f30l.onrender.com`. `/openapi.json` and `/docs` also returned 200. The
-database lives in Turso; Render’s `/tmp` cache and uploads are ephemeral on the free plan.
-
-### 17. Malformed JSON was a 500
-
-I sent `{not-json` to `/auth/register` and expected 400. The zod-openapi validator threw
-an `HTTPException` with status 400, but my `app.onError` caught every error as a 500:
-
-```json
-{ "error": "internal error", "requestId": "..." }
-```
-
-I added an `HTTPException` branch that returns its real status and message, and a test
-that checks the 400 plus the request id. The normal 500 path still hides internal details.
+The given `dev` task does not pass `--env-file`. The server still works with the defaults
+in `src/main.ts`. I left the task as it is so a fresh zip runs without `.env`, and
+documented the flag and Render environment variables.
 
 ## Bonus 1: Migrations with Drizzle Kit
 
