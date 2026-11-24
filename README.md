@@ -82,7 +82,7 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 ## Tests
 
-`deno task test` runs 64 tests. They cover:
+`deno task test` runs 69 tests. They cover:
 
 - **Auth (9):** register 201, duplicate email 409, concurrent duplicate 201/409, bad body
   400, malformed JSON 400, login 200 with a token, wrong password and unknown email both
@@ -91,15 +91,16 @@ Vite forwards `/auth` and `/api` to port 8000.
   empty title 400, invalid status 400, another user's task 404 for read/update/delete,
   owner update and delete, completedAt transitions, pagination, limit/page/status/id
   boundaries, bad query 400, status filter, unknown route 404.
-- **Health and config (7):** `/health`, `/healthz`, a healthy `/readyz`, a failing
-  `/readyz` with 503, bad configuration, the production default secret, and a valid config
-  object.
-- **Logging (3):** `x-request-id` on every response, the same id in a 404 body, and the
-  same id in a 500 body.
+- **Health and config (9):** `/health`, `/healthz`, a healthy `/readyz`, a failing
+  `/readyz` with 503, bad configuration, port/APP_ENV boundaries, default values, the
+  production default secret, and a valid config object.
+- **Logging (4):** `x-request-id` on every response, the same id in a 404 body, the same
+  id in a 500 body, and no password/token in the log lines.
 - **Rate limit (3):** five failures then 429, clearing on success, and the one-minute
   window expiring.
-- **Soft delete (5):** the welcome task, a deleted task disappearing from list and lookup,
-  restore, restoring a visible task 404, and a rolled-back registration.
+- **Soft delete (6):** the welcome task, a deleted task disappearing from list and lookup,
+  restore, restoring a visible task 404, another user's restore 404, and a rolled-back
+  registration.
 - **Seed (1):** two users and twenty tasks on the first run, nothing duplicated on the
   second.
 - **Summary (2):** the status totals on the route, and the naive and grouped versions
@@ -117,8 +118,8 @@ Vite forwards `/auth` and `/api` to port 8000.
   task requests borrow and release pooled connections correctly.
 - **OpenAPI (2):** `/openapi.json` lists the routes and the Bearer scheme, and `/docs`
   serves the Swagger UI page.
-- **Upload (2):** a PNG upload and download, owner-only access, and the 400/413/415 file
-  validation failures.
+- **Upload (3):** a PNG upload and download, owner-only access, JPEG, replacement removing
+  the old file, and the 400/413/415 file validation failures.
 - **WebSocket (4):** a bad token gets 401; a real WebSocket receives created, updated and
   deleted messages; another user's socket receives nothing.
 - **Purge (1):** only old done tasks with a completion date are removed, and a second run
@@ -126,6 +127,50 @@ Vite forwards `/auth` and `/api` to port 8000.
 
 Each test gets its own temporary SQLite file from `freshApp()`, so tests do not share
 data. `app.request(...)` calls the Hono app directly; no server or port is needed.
+
+## Commands
+
+| Command                                     | What it does                                           |
+| ------------------------------------------- | ------------------------------------------------------ |
+| `deno task dev`                             | Start the API with watch mode on port 8000             |
+| `deno task start`                           | Start the API once                                     |
+| `deno task test`                            | Run all 69 tests                                       |
+| `deno task check`                           | Type-check source, tests, scripts and Drizzle config   |
+| `deno fmt --check`                          | Check formatting                                       |
+| `deno lint`                                 | Lint the code and the given UI                         |
+| `deno task seed`                            | Insert two demo users and twenty tasks                 |
+| `deno task db:generate`                     | Generate a migration from `schema.ts`                  |
+| `deno task db:migrate`                      | Apply pending migrations with Drizzle Kit              |
+| `deno task db:summary-count`                | Show the naive (4) vs grouped (1) summary queries      |
+| `deno task db:explain`                      | Run the 20,000-task index benchmark                    |
+| `deno task smoke:remote <url>`              | Test health/register/login/task against a live URL     |
+| `deno task verify:submission`               | Check headers, required files, tasks and tracked files |
+| `deno task ui:install` / `deno task ui:dev` | Install and run the optional React UI                  |
+
+## Environment variables
+
+| Variable           | Default           | Purpose                                               |
+| ------------------ | ----------------- | ----------------------------------------------------- |
+| `PORT`             | `8000`            | HTTP port                                             |
+| `DATABASE_URL`     | `file:./tasks.db` | SQLite file or hosted `libsql://` URL                 |
+| `TURSO_AUTH_TOKEN` | unset             | Token for a hosted libSQL database                    |
+| `JWT_SECRET`       | `dev-secret`      | JWT signing secret; must be changed in production     |
+| `APP_ENV`          | `development`     | `development`, `test` or `production`                 |
+| `UPLOAD_DIR`       | `./uploads`       | Attachment directory                                  |
+| `KV_PATH`          | unset             | Optional Deno KV file; unset uses the runtime default |
+
+## R1–R8 traceability
+
+| Requirement | Implementation                                                  | Evidence                                                        |
+| ----------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| R1          | `src/`, `deno.json`, starter UI lint fix                        | `deno task check`, `deno fmt --check`, `deno lint`, CI          |
+| R2          | `src/schema.ts`, `drizzle/` migrations, SQL defaults and CHECKs | `tests/migrations_test.ts`, `tests/tasks_test.ts`               |
+| R3          | `src/auth.ts`, register/login routes, `requireAuth`             | `tests/auth_test.ts`, `tests/jwt_test.ts`, concurrent/race test |
+| R4          | Task CRUD routes with `ownVisible` and Drizzle operators        | `tests/tasks_test.ts`, `tests/bonus2_test.ts`                   |
+| R5          | Zod schemas, OpenAPI `defaultHook`, `notFound` and `onError`    | malformed JSON, bad body, unknown route tests                   |
+| R6          | `TaskQuery`, count query, stable ordering                       | pagination, limit/page/status/id boundary tests                 |
+| R7          | 69 tests in `tests/`                                            | `deno task test`, CI green run                                  |
+| R8          | README design, real curl outputs, `My own log`, name/number     | `deno task verify:submission`                                   |
 
 ## Design
 
