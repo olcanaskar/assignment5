@@ -83,6 +83,34 @@ Deno.test("Bonus 2: restore brings a deleted task back", async () => {
   assertEquals(get.status, 200);
 });
 
+Deno.test("Bonus 2: another user cannot restore your deleted task", async () => {
+  const app = await freshApp();
+  const owner = await registerAndLogin(app, "restore-owner@example.com");
+  const other = await registerAndLogin(app, "restore-other@example.com");
+
+  const created = await createTask(app, owner, { title: "Owner only" });
+  const { id } = await created.json() as { id: number };
+  assertEquals(
+    (await app.request(`/api/tasks/${id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${owner}` },
+    })).status,
+    200,
+  );
+
+  const foreign = await app.request(`/api/tasks/${id}/restore`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${other}` },
+  });
+  assertEquals(foreign.status, 404);
+
+  const own = await app.request(`/api/tasks/${id}/restore`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${owner}` },
+  });
+  assertEquals(own.status, 200);
+});
+
 Deno.test("Bonus 2: restoring a task that is not deleted is 404", async () => {
   const app = await freshApp();
   const token = await registerAndLogin(app, "restore-visible@example.com");

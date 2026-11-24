@@ -1,8 +1,18 @@
 // Abdullah Olcan Askar, 2024502180
 import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import { createApp } from "../src/app.ts";
 import { createDb, migrate } from "../src/db.ts";
 import { createTask, registerAndLogin } from "./helpers.ts";
+
+const fileExists = async (path: string) => {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 Deno.test("Bonus 12: upload and download an image attachment", async () => {
   const file = await Deno.makeTempFile({ suffix: ".db" });
@@ -57,6 +67,68 @@ Deno.test("Bonus 12: upload and download an image attachment", async () => {
       headers,
     });
     assertEquals(missing.status, 404);
+  } finally {
+    db.client.close();
+    await Deno.remove(uploadDir, { recursive: true }).catch(() => {});
+    await Deno.remove(file).catch(() => {});
+  }
+});
+
+Deno.test("Bonus 12: replacing an attachment removes the old file and accepts JPEG", async () => {
+  const file = await Deno.makeTempFile({ suffix: ".db" });
+  const uploadDir = await Deno.makeTempDir();
+  const db = createDb(`file:${file}`);
+  await migrate(db);
+  const app = createApp(db, undefined, undefined, uploadDir);
+
+  try {
+    const token = await registerAndLogin(app, "upload-replace@example.com");
+    const headers = { authorization: `Bearer ${token}` };
+    const created = await createTask(app, token, { title: "Replace image" });
+    const { id } = await created.json() as { id: number };
+
+    const pngForm = new FormData();
+    pngForm.set(
+      "file",
+      new File([new Uint8Array([137, 80, 78, 71])], "first.png", {
+        type: "image/png",
+      }),
+    );
+    const first = await app.request(`/api/tasks/${id}/attachment`, {
+      method: "POST",
+      headers,
+      body: pngForm,
+    });
+    assertEquals(first.status, 200);
+    const firstBody = await first.json() as { attachment: string | null };
+    if (!firstBody.attachment) throw new Error("first attachment missing");
+    const oldPath = join(uploadDir, firstBody.attachment);
+    assertEquals(await fileExists(oldPath), true);
+
+    const jpegForm = new FormData();
+    jpegForm.set(
+      "file",
+      new File([new Uint8Array([255, 216, 255, 224])], "second.jpg", {
+        type: "image/jpeg",
+      }),
+    );
+    const second = await app.request(`/api/tasks/${id}/attachment`, {
+      method: "POST",
+      headers,
+      body: jpegForm,
+    });
+    assertEquals(second.status, 200);
+    const secondBody = await second.json() as { attachment: string | null };
+    if (!secondBody.attachment) throw new Error("second attachment missing");
+    assertEquals(secondBody.attachment === firstBody.attachment, false);
+    assertEquals(await fileExists(oldPath), false);
+
+    const downloaded = await app.request(`/api/tasks/${id}/attachment`, {
+      headers,
+    });
+    assertEquals(downloaded.status, 200);
+    assertEquals(downloaded.headers.get("content-type"), "image/jpeg");
+    assertEquals(new Uint8Array(await downloaded.arrayBuffer()).length, 4);
   } finally {
     db.client.close();
     await Deno.remove(uploadDir, { recursive: true }).catch(() => {});
