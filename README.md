@@ -9,15 +9,16 @@ suite runs without starting a server.
 
 ## Repository
 
-The project is kept in a private Git repository:
+The project is kept in a public Git repository:
 <https://github.com/olcanaskar/assignment5>
 
-It will be made public before submission. To check a clean copy:
+To check a clean copy:
 
 ```sh
 git clone https://github.com/olcanaskar/assignment5.git
 cd assignment5
 deno task test
+# 69 passed | 0 failed
 ```
 
 ## Run it
@@ -1208,6 +1209,16 @@ at startup.
 and `JWT_SECRET` set with `fly secrets`. This keeps SQLite, uploads and KV on one volume,
 but Fly requires a credit card.
 
+## Bonus 20: Git repository
+
+Repository: <https://github.com/olcanaskar/assignment5> (public).
+
+- `.gitignore` excludes `.env`, `*.db`, `node_modules` and `uploads/`.
+- A clean copy was cloned from the public URL and `deno task test` passed **69 tests**.
+- The history has meaningful commits across 22–24 November: starter, schema, auth, routes,
+  validation, tests, each bonus, deployment and documentation. It is not one large commit.
+- The link is at the top of this README and in this section.
+
 ## Bonuses claimed
 
 - **Bonus 1: Migrations with Drizzle Kit**
@@ -1229,5 +1240,6 @@ but Fly requires a credit card.
 - **Bonus 17: Docker**
 - **Bonus 18: Continuous integration**
 - **Bonus 19: Deploy**
+- **Bonus 20: Git repository**
 
 Each section above includes the proof asked for in the handout.

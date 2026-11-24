@@ -58,6 +58,10 @@ check(readme.includes("## My own log"), "README has 'My own log'");
 check(readme.includes("## Repository"), "README has the repository section");
 check(readme.includes(liveUrl), "README has the live URL");
 check(readme.includes("## Bonus 19: Deploy"), "README claims Bonus 19");
+check(
+  readme.includes("## Bonus 20: Git repository"),
+  "README claims Bonus 20",
+);
 
 const tsFiles: string[] = [join(root, "drizzle.config.ts")];
 for (const dir of ["src", "tests", "scripts"]) {
