@@ -21,6 +21,45 @@ Deno.test("Bonus 10: a 404 body repeats the request id", async () => {
   assertEquals(body.requestId, res.headers.get("x-request-id"));
 });
 
+Deno.test("Bonus 10: request logs do not contain passwords or tokens", async () => {
+  const app = await freshApp();
+  const logs: string[] = [];
+  const original = console.log;
+
+  try {
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    const credentials = {
+      email: "log-redaction@example.com",
+      password: "secret123",
+    };
+    await app.request("/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(credentials),
+    });
+    const login = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(credentials),
+    });
+    const { token } = await login.json() as { token: string };
+    await app.request("/api/tasks", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+  } finally {
+    console.log = original;
+  }
+
+  const text = logs.join("\n");
+  assertEquals(text.includes("secret123"), false);
+  assertEquals(text.toLowerCase().includes("bearer"), false);
+  assertEquals(text.includes("password"), false);
+  assertEquals(text.includes("token"), false);
+});
+
 Deno.test("Bonus 10: a 500 body repeats the request id", async () => {
   const app = await freshApp();
   app.get("/boom", () => {

@@ -32,6 +32,14 @@ Deno.test("Bonus 8: /openapi.json lists the routes and the Bearer scheme", async
   }
 
   assertEquals(doc.components.securitySchemes.Bearer !== undefined, true);
+
+  const tasksPath = doc.paths["/api/tasks"] as {
+    get?: { security?: Array<Record<string, unknown>> };
+  } | undefined;
+  assertEquals(
+    tasksPath?.get?.security?.some((entry) => "Bearer" in entry),
+    true,
+  );
 });
 
 Deno.test("Bonus 8: /docs serves a Swagger UI page", async () => {
