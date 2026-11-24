@@ -1,0 +1,7 @@
+# Keep source files LF on every platform; Windows tools must not create CRLF diffs.
+* text=auto eol=lf
+
+# Binary assets, if added later.
+*.png binary
+*.jpg binary
+*.jpeg binary

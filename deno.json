@@ -33,6 +33,7 @@
     "@std/path": "jsr:@std/path@^1"
   },
   "fmt": {
-    "lineWidth": 90
+    "lineWidth": 90,
+    "exclude": ["drizzle"]
   }
 }
