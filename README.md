@@ -1243,3 +1243,32 @@ Repository: <https://github.com/olcanaskar/assignment5> (public).
 - **Bonus 20: Git repository**
 
 Each section above includes the proof asked for in the handout.
+
+## Submission
+
+Submit one folder named `assignment5`, zipped. The archive must not contain `.env`,
+`*.db`, `uploads/` or `node_modules/`. A safe way to create it from Git (tracked files
+only):
+
+```powershell
+git archive --format=zip --prefix=assignment5/ --output=C:\Projects\assignment5.zip HEAD
+tar -tf C:\Projects\assignment5.zip
+```
+
+Final checks before uploading to Moodle:
+
+```sh
+deno task verify:submission
+deno task test
+deno fmt --check
+deno lint
+deno task check
+```
+
+- Name and student number are at the top of this README and of every TypeScript source
+  file.
+- The public repository is <https://github.com/olcanaskar/assignment5>.
+- The live API is <https://tasks-api-f30l.onrender.com>.
+- Every claimed bonus starts with the exact `Bonus N: Title` heading and includes its
+  proof.
+- The deadline is the one announced in Moodle.
